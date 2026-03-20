@@ -137,3 +137,7 @@ RTPTransmitter/obj/Release/net9.0/RTPTransmitter.GlobalUsings.g.cs
 RTPTransmitter/obj/RTPTransmitter.csproj.nuget.dgspec.json
 RTPTransmitter/obj/RTPTransmitter.csproj.nuget.g.props
 RTPTransmitter/obj/RTPTransmitter.csproj.nuget.g.targets
+/RTPTransmitter/.vs
+/RTPTransmitter/obj
+/RTPTransmitter/.vs
+/RTPTransmitter/bin

@@ -31,7 +31,7 @@
    * @param {Boolean}      debug            Enable debug logging.
    */
   var SoundBuffer = function(ctx, sampleRate, sourceChannels, channelMap, bufferSize, debug) {
-    this.ctx = ctx;
+    this._ctxRef = ctx;
     this.sampleRate = sampleRate || 48000;
     this.sourceChannels = sourceChannels || 1;
     this.channelMap = channelMap || [0];
@@ -48,16 +48,35 @@
 
   SoundBuffer.prototype = {
     /**
+     * Return the live AudioContext. Prefers the current Howler.ctx
+     * (which may have been re-created after an autoplay-policy resume)
+     * and falls back to the reference captured at construction time.
+     * @return {AudioContext|null}
+     */
+    _ctx: function() {
+      var ctx = (typeof Howler !== 'undefined' && Howler.ctx) ? Howler.ctx : this._ctxRef;
+      // Keep the fallback reference up-to-date.
+      if (ctx) { this._ctxRef = ctx; }
+      return ctx;
+    },
+
+    /**
      * Initialize the gain node for volume control.
      */
     init: function() {
       var self = this;
-      if (!self.gainNode) {
-        self.gainNode = (typeof self.ctx.createGain === 'undefined')
-          ? self.ctx.createGainNode()
-          : self.ctx.createGain();
-        self.gainNode.gain.setValueAtTime(self._volume, self.ctx.currentTime);
-        self.gainNode.connect(Howler.masterGain || self.ctx.destination);
+      var ctx = self._ctx();
+      if (!ctx) { return self; }
+      if (!self.gainNode || self.gainNode.context !== ctx) {
+        // Re-create the gain node when the context has changed.
+        if (self.gainNode) {
+          try { self.gainNode.disconnect(); } catch (e) {}
+        }
+        self.gainNode = (typeof ctx.createGain === 'undefined')
+          ? ctx.createGainNode()
+          : ctx.createGain();
+        self.gainNode.gain.setValueAtTime(self._volume, ctx.currentTime);
+        self.gainNode.connect(Howler.masterGain || ctx.destination);
       }
       return self;
     },
@@ -106,16 +125,27 @@
      */
     createChunk: function(interleaved) {
       var self = this;
+      var ctx = self._ctx();
+      if (!ctx) {
+        self.log('createChunk skipped — AudioContext is null');
+        return null;
+      }
+
+      // Ensure context is running (may be suspended by browser autoplay policy).
+      if (ctx.state === 'suspended') {
+        ctx.resume();
+      }
+
       var channelData = self.deInterleave(interleaved);
       var outChannels = channelData.length;
       var framesPerChannel = channelData[0].length;
 
-      var audioBuffer = self.ctx.createBuffer(outChannels, framesPerChannel, self.sampleRate);
+      var audioBuffer = ctx.createBuffer(outChannels, framesPerChannel, self.sampleRate);
       for (var c = 0; c < outChannels; c++) {
         audioBuffer.getChannelData(c).set(channelData[c]);
       }
 
-      var source = self.ctx.createBufferSource();
+      var source = ctx.createBufferSource();
       source.buffer = audioBuffer;
       self.init();
       source.connect(self.gainNode);
@@ -152,6 +182,11 @@
      */
     addChunk: function(data) {
       var self = this;
+      var ctx = self._ctx();
+      if (!ctx) {
+        self.log('addChunk skipped — AudioContext is null');
+        return;
+      }
 
       if (self.isPlaying && self.chunks.length > self.bufferSize) {
         self.log('chunk discarded (buffer full: ' + self.chunks.length + ')');
@@ -159,19 +194,22 @@
       } else if (self.isPlaying && self.chunks.length <= self.bufferSize) {
         self.log('chunk accepted (' + self.chunks.length + ' in buffer)');
         var chunk = self.createChunk(data);
+        if (!chunk) { return; }
         chunk.start(self.startTime + self.lastChunkOffset);
         self.lastChunkOffset += chunk.buffer.duration;
         self.chunks.push(chunk);
       } else if (self.chunks.length < (self.bufferSize / 2) && !self.isPlaying) {
         self.log('chunk queued (' + self.chunks.length + ' in buffer)');
         var chunk = self.createChunk(data);
+        if (!chunk) { return; }
         self.chunks.push(chunk);
       } else {
         self.log('queued chunks scheduled (' + self.chunks.length + ' chunks)');
         self.isPlaying = true;
         var chunk = self.createChunk(data);
+        if (!chunk) { return; }
         self.chunks.push(chunk);
-        self.startTime = self.ctx.currentTime;
+        self.startTime = ctx.currentTime;
         self.lastChunkOffset = 0;
         for (var i = 0; i < self.chunks.length; i++) {
           var c = self.chunks[i];
@@ -190,8 +228,9 @@
       var self = this;
       if (typeof vol === 'number') {
         self._volume = vol;
-        if (self.gainNode) {
-          self.gainNode.gain.setValueAtTime(self._muted ? 0 : vol, self.ctx.currentTime);
+        var ctx = self._ctx();
+        if (self.gainNode && ctx) {
+          self.gainNode.gain.setValueAtTime(self._muted ? 0 : vol, ctx.currentTime);
         }
         return self;
       }
@@ -206,8 +245,9 @@
     mute: function(muted) {
       var self = this;
       self._muted = muted;
-      if (self.gainNode) {
-        self.gainNode.gain.setValueAtTime(muted ? 0 : self._volume, self.ctx.currentTime);
+      var ctx = self._ctx();
+      if (self.gainNode && ctx) {
+        self.gainNode.gain.setValueAtTime(muted ? 0 : self._volume, ctx.currentTime);
       }
       return self;
     },
