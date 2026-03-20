@@ -1,0 +1,26 @@
+﻿@page "/"
+
+<PageTitle>RTP Transmitter</PageTitle>
+
+<h1>RTP Transmitter - AES67 Audio Streamer</h1>
+
+<p class="lead">
+    This application receives AES67/RTP audio streams over UDP and delivers them to your browser
+    for real-time playback using <strong>Howler.js</strong> with the Web Audio API.
+</p>
+
+<div class="card mb-3">
+    <div class="card-body">
+        <h5 class="card-title">Architecture</h5>
+        <ul>
+            <li><strong>UDP Listener</strong> — Receives AES67 RTP packets (L16/L24 PCM at 48kHz)</li>
+            <li><strong>PCM Converter</strong> — Decodes big-endian PCM payloads into Float32 samples</li>
+            <li><strong>SignalR Hub</strong> — Streams audio chunks to connected browsers in real-time</li>
+            <li><strong>HowlerStream Plugin</strong> — Extends Howler.js with a SoundBuffer for gapless chunk playback via Web Audio API</li>
+        </ul>
+    </div>
+</div>
+
+<p>
+    Navigate to <a href="audiostream"><strong>Audio Stream</strong></a> to start listening.
+</p>

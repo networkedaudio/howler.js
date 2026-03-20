@@ -1,0 +1,258 @@
+@page "/sapdiscovery"
+@rendermode InteractiveServer
+@using RTPTransmitter.Services
+@inject SapStreamRegistry Registry
+@inject RtpStreamManager StreamManager
+@inject IJSRuntime JS
+@implements IDisposable
+
+<PageTitle>SAP Stream Discovery</PageTitle>
+
+<h2>SAP Stream Discovery</h2>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h5 class="card-title mb-0">Discovered Streams (@streams.Count)</h5>
+            <button class="btn btn-sm btn-outline-secondary" @onclick="RefreshStreams">
+                <span class="bi bi-arrow-clockwise" aria-hidden="true"></span> Refresh
+            </button>
+        </div>
+
+        @if (streams.Count == 0)
+        {
+            <div class="alert alert-info mb-0">
+                <strong>Listening for SAP announcements...</strong>
+                <br />
+                No AES67/SAP streams have been discovered yet on the network.
+                Streams will appear automatically as they are announced.
+            </div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-striped table-hover align-middle">
+                    <thead class="table-dark">
+                        <tr>
+                            <th>Name</th>
+                            <th>Multicast</th>
+                            <th>Port</th>
+                            <th>Codec</th>
+                            <th>Rate</th>
+                            <th>Ch</th>
+                            <th>Bits</th>
+                            <th>ptime</th>
+                            <th>Source</th>
+                            <th>Last Seen</th>
+                            <th class="text-center">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var stream in streams)
+                        {
+                            bool isActive = StreamManager.IsActive(stream.Id);
+                            <tr class="@(isActive ? "table-success" : "")">
+                                <td>
+                                    <strong>@stream.Name</strong>
+                                    @if (!string.IsNullOrEmpty(stream.Description))
+                                    {
+                                        <br /><small class="text-muted">@stream.Description</small>
+                                    }
+                                </td>
+                                <td><code>@stream.MulticastGroup</code></td>
+                                <td>@stream.Port</td>
+                                <td><span class="badge bg-info text-dark">@stream.Codec</span></td>
+                                <td>@(stream.SampleRate / 1000)k</td>
+                                <td>@stream.Channels</td>
+                                <td>@stream.BitDepth</td>
+                                <td>@(stream.PtimeMs > 0 ? $"{stream.PtimeMs}ms" : "—")</td>
+                                <td><small>@stream.OriginatingSource</small></td>
+                                <td><small>@FormatAge(stream.LastSeen)</small></td>
+                                <td class="text-center">
+                                    @if (isActive)
+                                    {
+                                        <div class="btn-group btn-group-sm">
+                                            <button class="btn btn-success btn-sm" disabled>
+                                                ● Listening
+                                            </button>
+                                            <button class="btn btn-outline-danger btn-sm"
+                                                    @onclick="() => StopStream(stream.Id)"
+                                                    disabled="@isProcessing">
+                                                Stop
+                                            </button>
+                                            <a class="btn btn-outline-primary btn-sm"
+                                               href="@($"audiostream?stream={stream.Id}")">
+                                                Open Player
+                                            </a>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <button class="btn btn-primary btn-sm"
+                                                @onclick="() => StartStream(stream)"
+                                                disabled="@isProcessing">
+                                            ▶ Listen
+                                        </button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+</div>
+
+@if (activeStreams.Count > 0)
+{
+    <div class="card mb-4">
+        <div class="card-body">
+            <h5 class="card-title">Active Listeners (@activeStreams.Count)</h5>
+            <div class="table-responsive">
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Multicast</th>
+                            <th>Port</th>
+                            <th>Format</th>
+                            <th>Since</th>
+                            <th class="text-center">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var active in activeStreams)
+                        {
+                            <tr>
+                                <td><strong>@active.Name</strong></td>
+                                <td><code>@active.MulticastGroup</code></td>
+                                <td>@active.Port</td>
+                                <td>@(active.BitDepth)bit / @(active.SampleRate / 1000)kHz / @(active.Channels)ch</td>
+                                <td><small>@FormatAge(active.StartedAt)</small></td>
+                                <td class="text-center">
+                                    <div class="btn-group btn-group-sm">
+                                        <a class="btn btn-outline-primary btn-sm"
+                                           href="@($"audiostream?stream={active.StreamId}")">
+                                            Open Player
+                                        </a>
+                                        <button class="btn btn-outline-danger btn-sm"
+                                                @onclick="() => StopStream(active.StreamId)"
+                                                disabled="@isProcessing">
+                                            Stop
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+}
+
+@if (selectedStreamSdp != null)
+{
+    <div class="card mb-4">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h5 class="card-title mb-0">SDP Details</h5>
+                <button class="btn btn-sm btn-outline-secondary" @onclick="() => selectedStreamSdp = null">Close</button>
+            </div>
+            <pre class="bg-dark text-light p-3 rounded" style="font-size: 0.85em; max-height: 400px; overflow-y: auto;">@selectedStreamSdp</pre>
+        </div>
+    </div>
+}
+
+@code {
+    private List<DiscoveredStream> streams = new();
+    private List<RtpStreamManager.ActiveStream> activeStreams = new();
+    private string? selectedStreamSdp;
+    private bool isProcessing;
+    private System.Threading.Timer? refreshTimer;
+
+    protected override void OnInitialized()
+    {
+        RefreshStreams();
+
+        // Subscribe to registry changes
+        Registry.OnStreamsChanged += OnRegistryChanged;
+
+        // Auto-refresh every 5 seconds for age display and active stream status
+        refreshTimer = new System.Threading.Timer(_ =>
+        {
+            InvokeAsync(() =>
+            {
+                RefreshStreams();
+                StateHasChanged();
+            });
+        }, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+    }
+
+    private void OnRegistryChanged()
+    {
+        InvokeAsync(() =>
+        {
+            RefreshStreams();
+            StateHasChanged();
+        });
+    }
+
+    private void RefreshStreams()
+    {
+        streams = Registry.GetAll().ToList();
+        activeStreams = StreamManager.GetActiveStreams().ToList();
+    }
+
+    private async Task StartStream(DiscoveredStream stream)
+    {
+        isProcessing = true;
+        try
+        {
+            StreamManager.StartListening(stream);
+            RefreshStreams();
+        }
+        catch (Exception ex)
+        {
+            // Log error - in a real app you'd show a toast/alert
+            Console.Error.WriteLine($"Error starting stream: {ex.Message}");
+        }
+        finally
+        {
+            isProcessing = false;
+        }
+    }
+
+    private async Task StopStream(string streamId)
+    {
+        isProcessing = true;
+        try
+        {
+            await StreamManager.StopListening(streamId, force: true);
+            RefreshStreams();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error stopping stream: {ex.Message}");
+        }
+        finally
+        {
+            isProcessing = false;
+        }
+    }
+
+    private static string FormatAge(DateTimeOffset time)
+    {
+        var age = DateTimeOffset.UtcNow - time;
+        if (age.TotalSeconds < 60) return $"{(int)age.TotalSeconds}s ago";
+        if (age.TotalMinutes < 60) return $"{(int)age.TotalMinutes}m ago";
+        return $"{(int)age.TotalHours}h {age.Minutes}m ago";
+    }
+
+    public void Dispose()
+    {
+        Registry.OnStreamsChanged -= OnRegistryChanged;
+        refreshTimer?.Dispose();
+    }
+}

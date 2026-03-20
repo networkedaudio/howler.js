@@ -1,0 +1,474 @@
+@page "/audiostream"
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.WebUtilities
+@using Microsoft.Extensions.Options
+@using RTPTransmitter.Services
+@inject IJSRuntime JS
+@inject IOptions<RtpListenerOptions> RtpOptions
+@inject RtpStreamManager StreamManager
+@inject SapStreamRegistry SapRegistry
+@inject NavigationManager Navigation
+
+<PageTitle>AES67 Audio Stream</PageTitle>
+
+<h2>AES67 Audio Stream</h2>
+
+@if (!string.IsNullOrEmpty(activeStreamName))
+{
+    <div class="alert alert-success d-flex align-items-center mb-3">
+        <strong class="me-2">● SAP Stream:</strong> @activeStreamName
+        <span class="ms-2 text-muted">(@activeStreamId)</span>
+        <a class="btn btn-sm btn-outline-secondary ms-auto" href="sapdiscovery">Back to Discovery</a>
+    </div>
+}
+
+<div class="card mb-4">
+    <div class="card-body">
+        <h5 class="card-title">Stream Configuration</h5>
+        <div class="row mb-3">
+            <div class="col-md-2">
+                <label class="form-label">Sample Rate</label>
+                <input type="number" class="form-control" @bind="sampleRate" disabled="@isStreaming" />
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Source Channels</label>
+                <input type="number" class="form-control" value="@sourceChannels" disabled />
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Buffer Size</label>
+                <input type="number" class="form-control" @bind="bufferSize" disabled="@isStreaming" min="2" max="20" />
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Debug</label>
+                <div class="form-check mt-2">
+                    <input class="form-check-input" type="checkbox" @bind="debug" disabled="@isStreaming" />
+                    <label class="form-check-label">Enable</label>
+                </div>
+            </div>
+        </div>
+
+        <div class="row mb-3">
+            <div class="col-md-4">
+                <label class="form-label">RTP Listen Port: <strong>@displayPort</strong></label>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">Multicast: <strong>@(string.IsNullOrEmpty(displayMulticast) ? "None (unicast)" : displayMulticast)</strong></label>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">Packets/Chunk: <strong>@(RtpOptions.Value.PacketsPerChunk)</strong></label>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <h5 class="card-title">Channel Selection</h5>
+        <p class="text-muted">Select which source channels to monitor. Assign channels to Left/Right output or solo a single channel as mono.</p>
+
+        <div class="mb-3">
+            <strong>Quick Presets:</strong>
+            <div class="btn-group ms-2 flex-wrap" role="group">
+                @if (sourceChannels >= 1)
+                {
+                    <button class="btn btn-sm btn-outline-primary" @onclick="() => ApplyChannelMap(new[]{0})" disabled="@(!isStreaming)">
+                        Mono Ch1
+                    </button>
+                }
+                @if (sourceChannels >= 2)
+                {
+                    <button class="btn btn-sm btn-outline-primary" @onclick="() => ApplyChannelMap(new[]{0, 1})" disabled="@(!isStreaming)">
+                        Stereo 1-2
+                    </button>
+                }
+                @for (int p = 1; p < sourceChannels / 2; p++)
+                {
+                    int left = p * 2;
+                    int right = p * 2 + 1;
+                    if (right < sourceChannels)
+                    {
+                        var capturedLeft = left;
+                        var capturedRight = right;
+                        <button class="btn btn-sm btn-outline-primary"
+                                @onclick="() => ApplyChannelMap(new[]{capturedLeft, capturedRight})"
+                                disabled="@(!isStreaming)">
+                            Stereo @(left + 1)-@(right + 1)
+                        </button>
+                    }
+                }
+            </div>
+        </div>
+
+        @if (sourceChannels > 0)
+        {
+            <div class="table-responsive">
+                <table class="table table-sm table-bordered align-middle" style="max-width: 600px;">
+                    <thead>
+                        <tr>
+                            <th>Source Ch</th>
+                            <th>Assign</th>
+                            <th style="width:80px;">Solo</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @for (int i = 0; i < sourceChannels; i++)
+                        {
+                            int ch = i;
+                            string assignment = GetChannelAssignment(ch);
+                            <tr class="@(assignment != "Off" ? "table-active" : "")">
+                                <td><strong>@(ch + 1)</strong> <span class="text-muted small">(index @ch)</span></td>
+                                <td>
+                                    <select class="form-select form-select-sm" style="width:120px;"
+                                            value="@assignment"
+                                            @onchange="e => OnChannelAssignmentChanged(ch, e.Value?.ToString())"
+                                            disabled="@(!isStreaming)">
+                                        <option value="Off">Off</option>
+                                        <option value="Left">Left</option>
+                                        <option value="Right">Right</option>
+                                        <option value="Mono">Mono</option>
+                                    </select>
+                                </td>
+                                <td>
+                                    <button class="btn btn-sm @(IsSoloed(ch) ? "btn-warning" : "btn-outline-secondary")"
+                                            @onclick="() => SoloChannel(ch)"
+                                            disabled="@(!isStreaming)">
+                                        S
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="mt-2">
+                <span class="text-muted">Current output: </span>
+                <code>[@(string.Join(", ", currentChannelMap.Select(c => $"ch{c + 1}")))]</code>
+                <span class="text-muted ms-2">
+                    (@(currentChannelMap.Length switch { 1 => "mono", 2 => "stereo", _ => currentChannelMap.Length + "-channel" }))
+                </span>
+            </div>
+        }
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <h5 class="card-title">Playback Controls</h5>
+        <div class="d-flex align-items-center gap-3 mb-3">
+            @if (!isStreaming)
+            {
+                <button class="btn btn-success btn-lg" @onclick="StartStream">
+                    ▶ Start Stream
+                </button>
+            }
+            else
+            {
+                <button class="btn btn-danger btn-lg" @onclick="StopStream">
+                    ⏹ Stop Stream
+                </button>
+            }
+
+            <button class="btn @(isMuted ? "btn-warning" : "btn-outline-secondary")" @onclick="ToggleMute" disabled="@(!isStreaming)">
+                @(isMuted ? "🔇 Unmute" : "🔊 Mute")
+            </button>
+        </div>
+
+        <div class="row align-items-center">
+            <div class="col-md-1">
+                <label class="form-label mb-0">Volume</label>
+            </div>
+            <div class="col-md-4">
+                <input type="range" class="form-range" min="0" max="100" @bind="volumePercent" @bind:event="oninput" @bind:after="UpdateVolume" />
+            </div>
+            <div class="col-md-1">
+                <span>@volumePercent%</span>
+            </div>
+        </div>
+
+        <div class="mt-3">
+            <span class="badge @(isStreaming ? "bg-success" : "bg-secondary") me-2">
+                @(isStreaming ? "● Streaming" : "○ Stopped")
+            </span>
+            <span class="badge bg-info me-2">Chunks: @chunksReceived</span>
+            <span class="badge bg-primary me-2">Played: @chunksPlayed</span>
+            @if (errors > 0)
+            {
+                <span class="badge bg-danger">Errors: @errors</span>
+            }
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        <h5 class="card-title">How It Works</h5>
+        <ol>
+            <li>The server listens for AES67 RTP packets on UDP port <strong>@(RtpOptions.Value.Port)</strong>.</li>
+            <li>PCM audio data (L16/L24, <strong>@sourceChannels channels</strong> at @(RtpOptions.Value.SampleRate)Hz) is extracted from RTP payloads.</li>
+            <li>All @sourceChannels channels are sent interleaved to the browser via SignalR.</li>
+            <li>The <strong>HowlerStream</strong> plugin de-interleaves the data and plays only the channels you select.</li>
+            <li>Change channel assignments live — solo any channel, pick stereo pairs, or create custom mixes.</li>
+        </ol>
+    </div>
+</div>
+
+@code {
+    private int sampleRate = 48000;
+    private int sourceChannels = 1;
+    private int bufferSize = 6;
+    private bool debug = false;
+    private bool isStreaming = false;
+    private bool isMuted = false;
+    private int volumePercent = 100;
+    private int chunksReceived = 0;
+    private int chunksPlayed = 0;
+    private int errors = 0;
+    private System.Timers.Timer? statsTimer;
+
+    // Channel assignment state: maps source channel index -> "Off"/"Left"/"Right"/"Mono"
+    private Dictionary<int, string> channelAssignments = new();
+    private int[] currentChannelMap = [0];
+    private int? soloChannel = null;
+
+    // SAP stream parameters
+    private string activeStreamId = "default";
+    private string? activeStreamName;
+    private string displayMulticast = "";
+    private int displayPort;
+
+    protected override void OnInitialized()
+    {
+        // Check for SAP stream query parameter
+        var uri = Navigation.ToAbsoluteUri(Navigation.Uri);
+        if (QueryHelpers.ParseQuery(uri.Query).TryGetValue("stream", out var streamParam))
+        {
+            var streamId = streamParam.ToString();
+            var discovered = SapRegistry.Get(streamId);
+            if (discovered != null)
+            {
+                activeStreamId = streamId;
+                activeStreamName = discovered.Name;
+                sampleRate = discovered.SampleRate;
+                sourceChannels = discovered.Channels;
+                displayMulticast = discovered.MulticastGroup;
+                displayPort = discovered.Port;
+
+                // Ensure the RTP listener is running for this stream
+                if (!StreamManager.IsActive(streamId))
+                {
+                    StreamManager.StartListening(discovered);
+                }
+            }
+        }
+
+        // Fall back to default config if no SAP stream
+        if (activeStreamId == "default")
+        {
+            sampleRate = RtpOptions.Value.SampleRate;
+            sourceChannels = RtpOptions.Value.Channels;
+            displayMulticast = RtpOptions.Value.MulticastGroup;
+            displayPort = RtpOptions.Value.Port;
+        }
+
+        // Initialize default assignments
+        for (int i = 0; i < sourceChannels; i++)
+        {
+            channelAssignments[i] = "Off";
+        }
+
+        // Default: first channel as mono, or first two as stereo
+        if (sourceChannels >= 2)
+        {
+            channelAssignments[0] = "Left";
+            channelAssignments[1] = "Right";
+            currentChannelMap = [0, 1];
+        }
+        else if (sourceChannels == 1)
+        {
+            channelAssignments[0] = "Mono";
+            currentChannelMap = [0];
+        }
+    }
+
+    private async Task StartStream()
+    {
+        await JS.InvokeVoidAsync("AudioStreamInterop.initialize",
+            sampleRate, sourceChannels, currentChannelMap, bufferSize, debug);
+        await JS.InvokeVoidAsync("AudioStreamInterop.connect", "/audiohub", activeStreamId);
+        isStreaming = true;
+
+        statsTimer = new System.Timers.Timer(1000);
+        statsTimer.Elapsed += async (s, e) => await UpdateStats();
+        statsTimer.Start();
+    }
+
+    private async Task StopStream()
+    {
+        statsTimer?.Stop();
+        statsTimer?.Dispose();
+        statsTimer = null;
+
+        await JS.InvokeVoidAsync("AudioStreamInterop.disconnect");
+        isStreaming = false;
+    }
+
+    private async Task ToggleMute()
+    {
+        isMuted = !isMuted;
+        await JS.InvokeVoidAsync("AudioStreamInterop.setMuted", isMuted);
+    }
+
+    private async Task UpdateVolume()
+    {
+        await JS.InvokeVoidAsync("AudioStreamInterop.setVolume", volumePercent / 100.0);
+    }
+
+    private string GetChannelAssignment(int ch)
+    {
+        if (soloChannel.HasValue)
+            return ch == soloChannel.Value ? "Mono" : "Off";
+        return channelAssignments.GetValueOrDefault(ch, "Off");
+    }
+
+    private bool IsSoloed(int ch) => soloChannel.HasValue && soloChannel.Value == ch;
+
+    private async Task SoloChannel(int ch)
+    {
+        if (soloChannel == ch)
+        {
+            // Un-solo: restore previous assignments
+            soloChannel = null;
+        }
+        else
+        {
+            soloChannel = ch;
+        }
+        await RebuildAndApplyChannelMap();
+    }
+
+    private async Task OnChannelAssignmentChanged(int ch, string? value)
+    {
+        soloChannel = null; // Clear solo when manually assigning
+        channelAssignments[ch] = value ?? "Off";
+        await RebuildAndApplyChannelMap();
+    }
+
+    private async Task ApplyChannelMap(int[] map)
+    {
+        soloChannel = null;
+
+        // Update the assignment UI to match
+        for (int i = 0; i < sourceChannels; i++)
+            channelAssignments[i] = "Off";
+
+        if (map.Length == 1)
+        {
+            channelAssignments[map[0]] = "Mono";
+        }
+        else if (map.Length >= 2)
+        {
+            channelAssignments[map[0]] = "Left";
+            channelAssignments[map[1]] = "Right";
+        }
+
+        currentChannelMap = map;
+
+        if (isStreaming)
+        {
+            await JS.InvokeVoidAsync("AudioStreamInterop.setChannelMap", (object)currentChannelMap);
+        }
+    }
+
+    private async Task RebuildAndApplyChannelMap()
+    {
+        var leftChannels = new List<int>();
+        var rightChannels = new List<int>();
+        var monoChannels = new List<int>();
+
+        for (int i = 0; i < sourceChannels; i++)
+        {
+            var assignment = GetChannelAssignment(i);
+            switch (assignment)
+            {
+                case "Left": leftChannels.Add(i); break;
+                case "Right": rightChannels.Add(i); break;
+                case "Mono": monoChannels.Add(i); break;
+            }
+        }
+
+        // Build the output channel map based on assignments
+        if (monoChannels.Count > 0 && leftChannels.Count == 0 && rightChannels.Count == 0)
+        {
+            // Mono output: use first mono channel
+            currentChannelMap = [monoChannels[0]];
+        }
+        else if (leftChannels.Count > 0 || rightChannels.Count > 0)
+        {
+            // Stereo output
+            int left = leftChannels.Count > 0 ? leftChannels[0] : (monoChannels.Count > 0 ? monoChannels[0] : 0);
+            int right = rightChannels.Count > 0 ? rightChannels[0] : (monoChannels.Count > 0 ? monoChannels[0] : left);
+            currentChannelMap = [left, right];
+        }
+        else
+        {
+            // Nothing assigned, default to channel 0 mono
+            currentChannelMap = [0];
+        }
+
+        if (isStreaming)
+        {
+            await JS.InvokeVoidAsync("AudioStreamInterop.setChannelMap", (object)currentChannelMap);
+        }
+    }
+
+    private async Task UpdateStats()
+    {
+        try
+        {
+            var stats = await JS.InvokeAsync<Dictionary<string, object>>("AudioStreamInterop.getStats");
+            if (stats != null)
+            {
+                if (stats.TryGetValue("chunksReceived", out var cr))
+                    chunksReceived = Convert.ToInt32(cr);
+                if (stats.TryGetValue("chunksPlayed", out var cp))
+                    chunksPlayed = Convert.ToInt32(cp);
+                if (stats.TryGetValue("errors", out var er))
+                    errors = Convert.ToInt32(er);
+                if (stats.TryGetValue("sourceChannels", out var sc))
+                {
+                    int reported = Convert.ToInt32(sc);
+                    if (reported != sourceChannels && reported > 0)
+                    {
+                        sourceChannels = reported;
+                        // Expand assignments if new channels appeared
+                        for (int i = 0; i < sourceChannels; i++)
+                        {
+                            if (!channelAssignments.ContainsKey(i))
+                                channelAssignments[i] = "Off";
+                        }
+                    }
+                }
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch
+        {
+            // Ignore stats update errors
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        statsTimer?.Stop();
+        statsTimer?.Dispose();
+        if (isStreaming)
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("AudioStreamInterop.disconnect");
+            }
+            catch { }
+        }
+    }
+}
