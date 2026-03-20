@@ -1,7 +1,6 @@
 @page "/audiostream"
 @rendermode InteractiveServer
 @using Microsoft.AspNetCore.WebUtilities
-@using Microsoft.AspNetCore.SignalR.Client
 @using Microsoft.Extensions.Options
 @using RTPTransmitter.Components.Shared
 @using RTPTransmitter.Services
@@ -10,6 +9,7 @@
 @inject RtpStreamManager StreamManager
 @inject SapStreamRegistry SapRegistry
 @inject NavigationManager Navigation
+@inject ChannelRecordingService RecordingService
 
 <PageTitle>AES67 Audio Stream</PageTitle>
 
@@ -332,7 +332,6 @@
     // Recording state
     private HashSet<int> recordingChannels = new();
     private HashSet<int> voiceDetectChannels = new();
-    private HubConnection? hubConnection;
 
     // SAP stream parameters
     private string activeStreamId = "default";
@@ -586,21 +585,8 @@
         }
     }
 
-    private async Task EnsureHubConnection()
+    private void OnRecordingChanged(int channel, bool enabled)
     {
-        if (hubConnection is not null) return;
-
-        hubConnection = new HubConnectionBuilder()
-            .WithUrl(Navigation.ToAbsoluteUri("/audiohub"))
-            .Build();
-
-        await hubConnection.StartAsync();
-    }
-
-    private async Task OnRecordingChanged(int channel, bool enabled)
-    {
-        await EnsureHubConnection();
-
         if (enabled)
             recordingChannels.Add(channel);
         else
@@ -609,19 +595,23 @@
             voiceDetectChannels.Remove(channel);
         }
 
-        await hubConnection!.SendAsync("SetChannelRecording", activeStreamId, channel, enabled);
+        // Resolve stream parameters for the recorder
+        var active = StreamManager.GetActiveStreams()
+            .FirstOrDefault(s => s.StreamId == activeStreamId);
+        int sr = active?.SampleRate ?? sampleRate;
+        int bd = active?.BitDepth ?? 24;
+
+        RecordingService.SetChannelRecording(activeStreamId, channel, enabled, sr, bd);
     }
 
-    private async Task OnVoiceDetectChanged(int channel, bool enabled)
+    private void OnVoiceDetectChanged(int channel, bool enabled)
     {
-        await EnsureHubConnection();
-
         if (enabled)
             voiceDetectChannels.Add(channel);
         else
             voiceDetectChannels.Remove(channel);
 
-        await hubConnection!.SendAsync("SetChannelVoiceDetect", activeStreamId, channel, enabled);
+        RecordingService.SetChannelVoiceDetect(activeStreamId, channel, enabled);
     }
 
     public async ValueTask DisposeAsync()
@@ -633,14 +623,6 @@
             try
             {
                 await JS.InvokeVoidAsync("AudioStreamInterop.disconnect");
-            }
-            catch { }
-        }
-        if (hubConnection is not null)
-        {
-            try
-            {
-                await hubConnection.DisposeAsync();
             }
             catch { }
         }
