@@ -76,7 +76,7 @@
 
         @if (pageMode == "Listen")
         {
-            <p class="text-muted">Select which source channels to monitor. Assign channels to Left/Right output or solo a single channel as mono.</p>
+            <p class="text-muted">Select which source channels to listen to.</p>
         }
         else
         {
@@ -128,8 +128,7 @@
                         <th>Label</th>
                         @if (pageMode == "Listen")
                         {
-                            <th>Assign</th>
-                            <th style="width:80px;">Solo</th>
+                            <th style="width:80px; text-align:center;">Listen</th>
                         }
                         else
                         {
@@ -149,8 +148,8 @@
 
                         @if (pageMode == "Listen")
                         {
-                            string assignment = GetChannelAssignment(ch);
-                            <tr class="@(assignment != "Off" ? "mud-theme-primary" : "")" style="@(assignment != "Off" ? "background-color: var(--mud-palette-primary-lighten, rgba(var(--mud-palette-primary-rgb),0.08));" : "")">
+                            bool isListening = listenChannels.Contains(ch);
+                            <tr>
                                 <td><strong>@(ch + 1)</strong> <span class="text-muted small">(index @ch)</span></td>
                                 <td>
                                     @if (!string.IsNullOrEmpty(label))
@@ -162,22 +161,11 @@
                                         <span class="text-muted small">—</span>
                                     }
                                 </td>
-                                <td>
-                                    <MudSelect T="string" Value="@assignment" ValueChanged="v => OnChannelAssignmentChanged(ch, v)"
-                                               Variant="Variant.Outlined" Dense="true" Margin="Margin.Dense"
-                                               Disabled="@(!isStreaming)" Style="max-width:130px;">
-                                        <MudSelectItem Value="@("Off")">Off</MudSelectItem>
-                                        <MudSelectItem Value="@("Left")">Left</MudSelectItem>
-                                        <MudSelectItem Value="@("Right")">Right</MudSelectItem>
-                                        <MudSelectItem Value="@("Mono")">Mono</MudSelectItem>
-                                    </MudSelect>
-                                </td>
-                                <td>
-                                    <MudIconButton Icon="@(IsSoloed(ch) ? Icons.Material.Filled.VolumeUp : Icons.Material.Outlined.VolumeUp)"
-                                                   Color="@(IsSoloed(ch) ? Color.Warning : Color.Default)"
-                                                   Size="MudBlazor.Size.Small"
-                                                   OnClick="() => SoloChannel(ch)"
-                                                   Disabled="@(!isStreaming)" />
+                                <td style="text-align:center;">
+                                    <MudCheckBox T="bool" Value="@isListening"
+                                                 ValueChanged="v => OnListenChanged(ch, v)"
+                                                 Color="Color.Primary"
+                                                 Dense="true" />
                                 </td>
                                 <td style="text-align:center; vertical-align:middle;">
                                     <ChannelLevelIndicator IsActive="@(isReceiving && isStreaming)"
@@ -321,10 +309,9 @@
     private double[] channelLevels = [];
     private System.Timers.Timer? statsTimer;
 
-    // Channel assignment state: maps source channel index -> "Off"/"Left"/"Right"/"Mono"
-    private Dictionary<int, string> channelAssignments = new();
+    // Channel listen state
+    private HashSet<int> listenChannels = new();
     private int[] currentChannelMap = [0];
-    private int? soloChannel = null;
 
     // Listen / Record mode toggle
     private string pageMode = "Listen";
@@ -375,23 +362,19 @@
             displayPort = RtpOptions.Value.Port;
         }
 
-        // Initialize default assignments
+        // Initialize default listen channels
         channelLevels = new double[sourceChannels];
-        for (int i = 0; i < sourceChannels; i++)
-        {
-            channelAssignments[i] = "Off";
-        }
 
-        // Default: first channel as mono, or first two as stereo
+        // Default: first channel, or first two as stereo
         if (sourceChannels >= 2)
         {
-            channelAssignments[0] = "Left";
-            channelAssignments[1] = "Right";
+            listenChannels.Add(0);
+            listenChannels.Add(1);
             currentChannelMap = [0, 1];
         }
         else if (sourceChannels == 1)
         {
-            channelAssignments[0] = "Mono";
+            listenChannels.Add(0);
             currentChannelMap = [0];
         }
     }
@@ -432,59 +415,28 @@
         await JS.InvokeVoidAsync("AudioStreamInterop.setVolume", volumePercent / 100.0);
     }
 
-    private string GetChannelAssignment(int ch)
-    {
-        if (soloChannel.HasValue)
-            return ch == soloChannel.Value ? "Mono" : "Off";
-        return channelAssignments.GetValueOrDefault(ch, "Off");
-    }
-
-    private bool IsSoloed(int ch) => soloChannel.HasValue && soloChannel.Value == ch;
-
     private string GetChannelLabel(int ch) =>
         ch >= 0 && ch < channelLabels.Count ? channelLabels[ch] : string.Empty;
 
     private double GetChannelLevel(int ch) =>
         ch >= 0 && ch < channelLevels.Length ? channelLevels[ch] : 0;
 
-    private async Task SoloChannel(int ch)
+    private async Task OnListenChanged(int channel, bool enabled)
     {
-        if (soloChannel == ch)
-        {
-            // Un-solo: restore previous assignments
-            soloChannel = null;
-        }
+        if (enabled)
+            listenChannels.Add(channel);
         else
-        {
-            soloChannel = ch;
-        }
-        await RebuildAndApplyChannelMap();
-    }
+            listenChannels.Remove(channel);
 
-    private async Task OnChannelAssignmentChanged(int ch, string? value)
-    {
-        soloChannel = null; // Clear solo when manually assigning
-        channelAssignments[ch] = value ?? "Off";
         await RebuildAndApplyChannelMap();
     }
 
     private async Task ApplyChannelMap(int[] map)
     {
-        soloChannel = null;
-
-        // Update the assignment UI to match
-        for (int i = 0; i < sourceChannels; i++)
-            channelAssignments[i] = "Off";
-
-        if (map.Length == 1)
-        {
-            channelAssignments[map[0]] = "Mono";
-        }
-        else if (map.Length >= 2)
-        {
-            channelAssignments[map[0]] = "Left";
-            channelAssignments[map[1]] = "Right";
-        }
+        // Update listen checkboxes to match the preset
+        listenChannels.Clear();
+        foreach (var ch in map)
+            listenChannels.Add(ch);
 
         currentChannelMap = map;
 
@@ -496,37 +448,13 @@
 
     private async Task RebuildAndApplyChannelMap()
     {
-        var leftChannels = new List<int>();
-        var rightChannels = new List<int>();
-        var monoChannels = new List<int>();
-
-        for (int i = 0; i < sourceChannels; i++)
+        if (listenChannels.Count > 0)
         {
-            var assignment = GetChannelAssignment(i);
-            switch (assignment)
-            {
-                case "Left": leftChannels.Add(i); break;
-                case "Right": rightChannels.Add(i); break;
-                case "Mono": monoChannels.Add(i); break;
-            }
-        }
-
-        // Build the output channel map based on assignments
-        if (monoChannels.Count > 0 && leftChannels.Count == 0 && rightChannels.Count == 0)
-        {
-            // Mono output: use first mono channel
-            currentChannelMap = [monoChannels[0]];
-        }
-        else if (leftChannels.Count > 0 || rightChannels.Count > 0)
-        {
-            // Stereo output
-            int left = leftChannels.Count > 0 ? leftChannels[0] : (monoChannels.Count > 0 ? monoChannels[0] : 0);
-            int right = rightChannels.Count > 0 ? rightChannels[0] : (monoChannels.Count > 0 ? monoChannels[0] : left);
-            currentChannelMap = [left, right];
+            currentChannelMap = listenChannels.OrderBy(c => c).ToArray();
         }
         else
         {
-            // Nothing assigned, default to channel 0 mono
+            // Nothing selected, default to channel 0
             currentChannelMap = [0];
         }
 
@@ -556,12 +484,6 @@
                     {
                         sourceChannels = reported;
                         channelLevels = new double[sourceChannels];
-                        // Expand assignments if new channels appeared
-                        for (int i = 0; i < sourceChannels; i++)
-                        {
-                            if (!channelAssignments.ContainsKey(i))
-                                channelAssignments[i] = "Off";
-                        }
                     }
                 }
                 if (stats.TryGetProperty("receiving", out var rv))
