@@ -123,6 +123,46 @@ public sealed class ChannelRecordingService : IDisposable
     }
 
     /// <summary>
+    /// Snapshot of a single channel recording for API consumption.
+    /// </summary>
+    public sealed class RecordingInfo
+    {
+        public required string StreamId { get; init; }
+        public required int Channel { get; init; }
+        public required int SampleRate { get; init; }
+        public required int BitDepth { get; init; }
+        public required bool VoiceDetectEnabled { get; init; }
+        public required long BufferBytes { get; init; }
+        public required DateTimeOffset LastPacketTime { get; init; }
+    }
+
+    /// <summary>
+    /// Get a snapshot of all active recordings for API use.
+    /// </summary>
+    public IReadOnlyList<RecordingInfo> GetAllRecordingInfo()
+    {
+        var list = new List<RecordingInfo>();
+        foreach (var kvp in _recorders)
+        {
+            var r = kvp.Value;
+            lock (r.Lock)
+            {
+                list.Add(new RecordingInfo
+                {
+                    StreamId = r.StreamId,
+                    Channel = r.Channel,
+                    SampleRate = r.SampleRate,
+                    BitDepth = r.BitDepth,
+                    VoiceDetectEnabled = r.VoiceDetectEnabled,
+                    BufferBytes = r.Buffer.Length,
+                    LastPacketTime = r.LastPacketTime
+                });
+            }
+        }
+        return list;
+    }
+
+    /// <summary>
     /// Feed interleaved float32 samples from an RTP packet into the recording buffers.
     /// Called by RtpStreamManager for each packet on streams that have recording channels.
     /// </summary>

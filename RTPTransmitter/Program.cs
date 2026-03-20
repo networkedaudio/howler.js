@@ -1,7 +1,9 @@
 using MudBlazor.Services;
+using RTPTransmitter.Api;
 using RTPTransmitter.Components;
 using RTPTransmitter.Hubs;
 using RTPTransmitter.Services;
+using Microsoft.OpenApi;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -16,6 +18,38 @@ builder.Services.AddSignalR(options =>
 {
     options.MaximumReceiveMessageSize = 512 * 1024; // 512 KB
 });
+
+// API controllers + Swagger
+builder.Services.AddControllers();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(c =>
+{
+    c.SwaggerDoc("v1", new OpenApiInfo
+    {
+        Title = "RTP Transmitter API",
+        Version = "v1",
+        Description = "API for managing AES67 stream discovery and recording."
+    });
+
+    // API key auth in Swagger UI
+    c.AddSecurityDefinition(ApiKeyAuthHandler.SchemeName, new OpenApiSecurityScheme
+    {
+        Name = ApiKeyAuthHandler.HeaderName,
+        In = ParameterLocation.Header,
+        Type = SecuritySchemeType.ApiKey,
+        Description = "API key passed via the X-Api-Key header."
+    });
+
+    c.AddSecurityRequirement((document) => new OpenApiSecurityRequirement
+    {
+        [new OpenApiSecuritySchemeReference(ApiKeyAuthHandler.SchemeName, document)] = new List<string>()
+    });
+});
+
+// API key authentication
+builder.Services.AddAuthentication(ApiKeyAuthHandler.SchemeName)
+    .AddScheme<ApiKeyAuthOptions, ApiKeyAuthHandler>(ApiKeyAuthHandler.SchemeName, _ => { });
+builder.Services.AddAuthorization();
 
 // Bind RTP listener configuration from appsettings.json
 builder.Services.Configure<RtpListenerOptions>(
@@ -55,10 +89,24 @@ if (!app.Environment.IsDevelopment())
     app.UseExceptionHandler("/Error", createScopeForErrors: true);
 }
 
+// Swagger UI (available in all environments)
+app.UseSwagger();
+app.UseSwaggerUI(c =>
+{
+    c.SwaggerEndpoint("/swagger/v1/swagger.json", "RTP Transmitter API v1");
+    c.RoutePrefix = "swagger";
+});
+
 app.UseAntiforgery();
+
+app.UseAuthentication();
+app.UseAuthorization();
 
 app.UseStaticFiles();
 app.MapStaticAssets();
+
+// Map API controllers
+app.MapControllers();
 
 // Map the SignalR audio streaming hub
 app.MapHub<AudioStreamHub>("/audiohub");
