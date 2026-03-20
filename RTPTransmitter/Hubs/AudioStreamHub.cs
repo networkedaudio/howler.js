@@ -19,17 +19,20 @@ public sealed class AudioStreamHub : Hub
     private readonly RtpListenerOptions _options;
     private readonly RtpStreamManager _streamManager;
     private readonly ChannelRecordingService _recordingService;
+    private readonly SoundcardCaptureService _soundcardService;
 
     public AudioStreamHub(
         ILogger<AudioStreamHub> logger,
         IOptions<RtpListenerOptions> options,
         RtpStreamManager streamManager,
-        ChannelRecordingService recordingService)
+        ChannelRecordingService recordingService,
+        SoundcardCaptureService soundcardService)
     {
         _logger = logger;
         _options = options.Value;
         _streamManager = streamManager;
         _recordingService = recordingService;
+        _soundcardService = soundcardService;
     }
 
     public override Task OnConnectedAsync()
@@ -55,23 +58,35 @@ public sealed class AudioStreamHub : Hub
     {
         await Groups.AddToGroupAsync(Context.ConnectionId, streamId);
 
-        // Check if this is a dynamically-started SAP stream
-        var activeStreams = _streamManager.GetActiveStreams();
-        var active = activeStreams.FirstOrDefault(s => s.StreamId == streamId);
-
         int sampleRate;
         int channels;
 
-        if (active != null)
+        // Check if this is a soundcard stream
+        var soundcardCapture = _soundcardService.GetActiveCaptures()
+            .FirstOrDefault(c => c.StreamId == streamId);
+
+        if (soundcardCapture != null)
         {
-            sampleRate = active.SampleRate;
-            channels = active.Channels;
+            sampleRate = SoundcardCaptureService.SampleRate;
+            channels = SoundcardCaptureService.Channels;
         }
         else
         {
-            // Fall back to static config (the "default" stream)
-            sampleRate = _options.SampleRate;
-            channels = _options.Channels;
+            // Check if this is a dynamically-started SAP stream
+            var activeStreams = _streamManager.GetActiveStreams();
+            var active = activeStreams.FirstOrDefault(s => s.StreamId == streamId);
+
+            if (active != null)
+            {
+                sampleRate = active.SampleRate;
+                channels = active.Channels;
+            }
+            else
+            {
+                // Fall back to static config (the "default" stream)
+                sampleRate = _options.SampleRate;
+                channels = _options.Channels;
+            }
         }
 
         _logger.LogInformation(

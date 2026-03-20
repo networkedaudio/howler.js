@@ -75,6 +75,9 @@ builder.Services.Configure<RecordingOptions>(
     builder.Configuration.GetSection(RecordingOptions.Section));
 builder.Services.AddSingleton<ChannelRecordingService>();
 
+// Soundcard capture (PvRecorder-based local recording device input)
+builder.Services.AddSingleton<SoundcardCaptureService>();
+
 // Ensure static web assets manifest is loaded in all environments (not just Development)
 if (!builder.Environment.IsDevelopment())
 {

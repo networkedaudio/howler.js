@@ -10,17 +10,27 @@
 @inject SapStreamRegistry SapRegistry
 @inject NavigationManager Navigation
 @inject ChannelRecordingService RecordingService
+@inject SoundcardCaptureService SoundcardService
 
-<PageTitle>AES67 Audio Stream</PageTitle>
+<PageTitle>Audio Stream</PageTitle>
 
-<h2>AES67 Audio Stream</h2>
+<h2>Audio Stream</h2>
 
 @if (!string.IsNullOrEmpty(activeStreamName))
 {
     <div class="alert alert-success d-flex align-items-center mb-3">
-        <strong class="me-2">● SAP Stream:</strong> @activeStreamName
-        <span class="ms-2 text-muted">(@activeStreamId)</span>
-        <a class="btn btn-sm btn-outline-secondary ms-auto" href="sapdiscovery">Back to Discovery</a>
+        @if (isSoundcard)
+        {
+            <strong class="me-2">● Soundcard:</strong> @activeStreamName
+            <span class="ms-2 text-muted">(device @soundcardDeviceIndex)</span>
+            <a class="btn btn-sm btn-outline-secondary ms-auto" href="soundcards">Back to Soundcards</a>
+        }
+        else
+        {
+            <strong class="me-2">● SAP Stream:</strong> @activeStreamName
+            <span class="ms-2 text-muted">(@activeStreamId)</span>
+            <a class="btn btn-sm btn-outline-secondary ms-auto" href="sapdiscovery">Back to Discovery</a>
+        }
     </div>
 }
 
@@ -327,11 +337,41 @@
     private int displayPort;
     private List<string> channelLabels = [];
 
+    // Soundcard parameters
+    private bool isSoundcard;
+    private int soundcardDeviceIndex = -1;
+
     protected override void OnInitialized()
     {
-        // Check for SAP stream query parameter
         var uri = Navigation.ToAbsoluteUri(Navigation.Uri);
-        if (QueryHelpers.ParseQuery(uri.Query).TryGetValue("stream", out var streamParam))
+        var query = QueryHelpers.ParseQuery(uri.Query);
+
+        // Check for soundcard query parameter
+        if (query.TryGetValue("soundcard", out var scParam) &&
+            int.TryParse(scParam, out var devIdx))
+        {
+            isSoundcard = true;
+            soundcardDeviceIndex = devIdx;
+            activeStreamId = SoundcardCaptureService.MakeStreamId(devIdx);
+            sampleRate = SoundcardCaptureService.SampleRate;
+            sourceChannels = SoundcardCaptureService.Channels;
+            displayMulticast = "";
+            displayPort = 0;
+
+            // Resolve device name
+            var devices = SoundcardService.GetAvailableDevices();
+            activeStreamName = devIdx >= 0 && devIdx < devices.Length
+                ? devices[devIdx]
+                : $"Device {devIdx}";
+
+            // Ensure capture is running
+            if (!SoundcardService.IsActive(devIdx))
+            {
+                SoundcardService.StartCapture(devIdx, activeStreamName);
+            }
+        }
+        // Check for SAP stream query parameter
+        else if (query.TryGetValue("stream", out var streamParam))
         {
             var streamId = streamParam.ToString();
             var discovered = SapRegistry.Get(streamId);
@@ -353,7 +393,7 @@
             }
         }
 
-        // Fall back to default config if no SAP stream
+        // Fall back to default config if no SAP stream or soundcard
         if (activeStreamId == "default")
         {
             sampleRate = RtpOptions.Value.SampleRate;

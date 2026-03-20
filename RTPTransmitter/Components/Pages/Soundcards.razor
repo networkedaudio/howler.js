@@ -1,0 +1,159 @@
+@page "/soundcards"
+@rendermode InteractiveServer
+@using RTPTransmitter.Services
+@inject SoundcardCaptureService CaptureService
+@inject NavigationManager Navigation
+@implements IDisposable
+
+<PageTitle>Soundcards</PageTitle>
+
+<h2 class="mb-4">Recording Devices</h2>
+
+<MudPaper Elevation="1" Class="pa-4 mb-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <MudText Typo="Typo.h6">Available Devices (@devices.Length)</MudText>
+        <MudIconButton Icon="@Icons.Material.Filled.Refresh" Size="Size.Small"
+                       OnClick="RefreshDevices" title="Refresh" />
+    </div>
+
+    @if (devices.Length == 0)
+    {
+        <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true">
+            <strong>No recording devices found.</strong><br />
+            Make sure a microphone or audio interface is connected and recognised by the operating system.
+        </MudAlert>
+    }
+    else
+    {
+        <MudTable Items="@deviceList" Dense="true" Hover="true" Bordered="true" Striped="true"
+                  Breakpoint="Breakpoint.Sm" RowClass="align-middle">
+            <HeaderContent>
+                <MudTh Style="width:60px;">Index</MudTh>
+                <MudTh>Device Name</MudTh>
+                <MudTh>Sample Rate</MudTh>
+                <MudTh>Channels</MudTh>
+                <MudTh>Bit Depth</MudTh>
+                <MudTh Style="text-align:center;">Status</MudTh>
+                <MudTh Style="text-align:center;">Action</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Index"><strong>@context.Index</strong></MudTd>
+                <MudTd DataLabel="Name">
+                    <strong>@context.Name</strong>
+                </MudTd>
+                <MudTd DataLabel="Sample Rate">@(SoundcardCaptureService.SampleRate / 1000)k</MudTd>
+                <MudTd DataLabel="Channels">@SoundcardCaptureService.Channels</MudTd>
+                <MudTd DataLabel="Bit Depth">@SoundcardCaptureService.BitDepth</MudTd>
+                <MudTd DataLabel="Status" Style="text-align:center;">
+                    @if (CaptureService.IsActive(context.Index))
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Success">● Capturing</MudChip>
+                    }
+                    else
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Default" Variant="Variant.Outlined">Idle</MudChip>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Action" Style="text-align:center;">
+                    @{ bool isActive = CaptureService.IsActive(context.Index); }
+                    @if (isActive)
+                    {
+                        <div class="d-flex gap-1 justify-center">
+                            <MudButton Variant="Variant.Outlined" Color="Color.Error" Size="Size.Small"
+                                       OnClick="() => StopCapture(context.Index)" Disabled="isProcessing">
+                                Stop
+                            </MudButton>
+                            <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small"
+                                       Href="@($"audiostream?soundcard={context.Index}")">
+                                Open Player
+                            </MudButton>
+                        </div>
+                    }
+                    else
+                    {
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                                   OnClick="() => StartAndOpen(context.Index, context.Name)" Disabled="isProcessing">
+                            <MudIcon Icon="@Icons.Material.Filled.PlayArrow" Size="Size.Small" Class="me-1" />
+                            Open in Player
+                        </MudButton>
+                    }
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+    }
+</MudPaper>
+
+<MudPaper Elevation="1" Class="pa-4">
+    <MudText Typo="Typo.h6" Class="mb-2">About</MudText>
+    <MudText Typo="Typo.body2">
+        Recording devices are enumerated using <strong>PvRecorder</strong>, a cross-platform audio capture library.
+        Audio is captured at <strong>@(SoundcardCaptureService.SampleRate / 1000) kHz / @(SoundcardCaptureService.BitDepth)-bit / mono</strong>
+        and streamed to the Audio Stream player via the same SignalR pipeline used for AES67 streams.
+    </MudText>
+</MudPaper>
+
+@code {
+    private string[] devices = [];
+    private List<DeviceInfo> deviceList = [];
+    private bool isProcessing = false;
+    private System.Timers.Timer? refreshTimer;
+
+    protected override void OnInitialized()
+    {
+        RefreshDevices();
+
+        // Periodically refresh status (captures may start/stop externally)
+        refreshTimer = new System.Timers.Timer(2000);
+        refreshTimer.Elapsed += async (_, _) => await InvokeAsync(StateHasChanged);
+        refreshTimer.Start();
+    }
+
+    private void RefreshDevices()
+    {
+        devices = CaptureService.GetAvailableDevices();
+        deviceList = devices
+            .Select((name, index) => new DeviceInfo { Index = index, Name = name })
+            .ToList();
+    }
+
+    private void StartAndOpen(int deviceIndex, string deviceName)
+    {
+        isProcessing = true;
+
+        try
+        {
+            CaptureService.StartCapture(deviceIndex, deviceName);
+            Navigation.NavigateTo($"audiostream?soundcard={deviceIndex}");
+        }
+        finally
+        {
+            isProcessing = false;
+        }
+    }
+
+    private async Task StopCapture(int deviceIndex)
+    {
+        isProcessing = true;
+
+        try
+        {
+            await CaptureService.StopCapture(deviceIndex, force: true);
+        }
+        finally
+        {
+            isProcessing = false;
+        }
+    }
+
+    public void Dispose()
+    {
+        refreshTimer?.Stop();
+        refreshTimer?.Dispose();
+    }
+
+    private sealed class DeviceInfo
+    {
+        public int Index { get; init; }
+        public string Name { get; init; } = string.Empty;
+    }
+}
