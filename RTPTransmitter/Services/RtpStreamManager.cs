@@ -128,36 +128,79 @@ public sealed class RtpStreamManager : IDisposable
             udpClient.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
             udpClient.Client.Bind(new IPEndPoint(IPAddress.Any, stream.Port));
 
+            _logger.LogInformation(
+                "RTP [{StreamId}] UDP socket bound to 0.0.0.0:{Port}",
+                stream.StreamId, stream.Port);
+
             if (!string.IsNullOrWhiteSpace(stream.MulticastGroup))
             {
                 var multicastAddress = IPAddress.Parse(stream.MulticastGroup);
                 udpClient.JoinMulticastGroup(multicastAddress);
-                _logger.LogDebug("RTP listener joined multicast {Group}:{Port}", stream.MulticastGroup, stream.Port);
+                _logger.LogInformation(
+                    "RTP [{StreamId}] Joined multicast {Group}:{Port}",
+                    stream.StreamId, stream.MulticastGroup, stream.Port);
             }
+            else
+            {
+                _logger.LogWarning(
+                    "RTP [{StreamId}] No multicast group configured — listening unicast only on port {Port}",
+                    stream.StreamId, stream.Port);
+            }
+
+            _logger.LogInformation(
+                "RTP [{StreamId}] Waiting for packets (bitDepth={BitDepth}, sampleRate={SampleRate}, channels={Channels})",
+                stream.StreamId, stream.BitDepth, stream.SampleRate, stream.Channels);
 
             var sampleBuffer = new List<float>();
             ushort lastSequence = 0;
             bool firstPacket = true;
             int packetsInChunk = 0;
             const int packetsPerChunk = 10;
+            long totalPackets = 0;
+            long totalChunksSent = 0;
+            long parseErrors = 0;
+            long versionMismatches = 0;
+            var lastStatsTime = DateTimeOffset.UtcNow;
 
             while (!ct.IsCancellationRequested)
             {
                 var result = await udpClient.ReceiveAsync(ct);
                 var data = result.Buffer;
+                totalPackets++;
 
                 RtpPacket packet;
                 try
                 {
                     packet = RtpPacket.Parse(data, data.Length);
                 }
-                catch (ArgumentException)
+                catch (ArgumentException ex)
                 {
+                    parseErrors++;
+                    if (parseErrors <= 5)
+                        _logger.LogWarning(
+                            "RTP [{StreamId}] Parse error (#{Count}): {Message} (datagram {Bytes} bytes from {Remote})",
+                            stream.StreamId, parseErrors, ex.Message, data.Length, result.RemoteEndPoint);
                     continue;
                 }
 
                 if (packet.Version != 2)
+                {
+                    versionMismatches++;
+                    if (versionMismatches <= 3)
+                        _logger.LogWarning(
+                            "RTP [{StreamId}] Non-RTPv2 packet (version={Version}, PT={PT}, {Bytes} bytes from {Remote})",
+                            stream.StreamId, packet.Version, packet.PayloadType, data.Length, result.RemoteEndPoint);
                     continue;
+                }
+
+                // Log first packet in detail
+                if (firstPacket)
+                {
+                    _logger.LogInformation(
+                        "RTP [{StreamId}] *** First packet *** from {Remote}: PT={PT}, seq={Seq}, SSRC={Ssrc}, payloadBytes={PayloadLen}, extension={Ext}",
+                        stream.StreamId, result.RemoteEndPoint, packet.PayloadType, packet.SequenceNumber,
+                        packet.Ssrc, packet.Payload.Length, packet.Extension);
+                }
 
                 // Detect sequence gaps
                 if (!firstPacket)
@@ -192,6 +235,25 @@ public sealed class RtpStreamManager : IDisposable
 
                     await _hubContext.Clients.Group(stream.StreamId)
                         .SendAsync("ReceiveAudioChunk", base64, stream.Channels, ct);
+
+                    totalChunksSent++;
+
+                    if (totalChunksSent == 1)
+                    {
+                        _logger.LogInformation(
+                            "RTP [{StreamId}] *** First chunk sent *** to group \"{Group}\" ({Samples} samples, {Bytes} base64 chars, {Channels}ch)",
+                            stream.StreamId, stream.StreamId, chunkSamples.Length, base64.Length, stream.Channels);
+                    }
+                }
+
+                // Periodic stats every 10 seconds
+                var now = DateTimeOffset.UtcNow;
+                if ((now - lastStatsTime).TotalSeconds >= 10)
+                {
+                    _logger.LogInformation(
+                        "RTP [{StreamId}] Stats: packets={Packets}, chunksSent={Chunks}, parseErrors={ParseErr}, versionMismatch={VerErr}, bufferSamples={BufLen}",
+                        stream.StreamId, totalPackets, totalChunksSent, parseErrors, versionMismatches, sampleBuffer.Count);
+                    lastStatsTime = now;
                 }
             }
 

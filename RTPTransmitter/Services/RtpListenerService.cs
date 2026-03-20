@@ -56,10 +56,19 @@ public sealed class RtpListenerService : BackgroundService
             _logger.LogInformation("Joined multicast group {MulticastGroup}", _options.MulticastGroup);
         }
 
+        _logger.LogInformation(
+            "RTP [default] Waiting for packets (forceBitDepth={BitDepth}, packetsPerChunk={PPC})",
+            _options.ForceBitDepth, _options.PacketsPerChunk);
+
         var sampleBuffer = new List<float>();
         ushort lastSequence = 0;
         bool firstPacket = true;
         int packetsInChunk = 0;
+        long totalPackets = 0;
+        long totalChunksSent = 0;
+        long parseErrors = 0;
+        long versionMismatches = 0;
+        var lastStatsTime = DateTimeOffset.UtcNow;
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -67,6 +76,7 @@ public sealed class RtpListenerService : BackgroundService
             {
                 var result = await udpClient.ReceiveAsync(stoppingToken);
                 var data = result.Buffer;
+                totalPackets++;
 
                 RtpPacket packet;
                 try
@@ -75,15 +85,32 @@ public sealed class RtpListenerService : BackgroundService
                 }
                 catch (ArgumentException ex)
                 {
-                    _logger.LogWarning("Invalid RTP packet: {Message}", ex.Message);
+                    parseErrors++;
+                    if (parseErrors <= 5)
+                        _logger.LogWarning(
+                            "RTP [default] Parse error (#{Count}): {Message} (datagram {Bytes} bytes from {Remote})",
+                            parseErrors, ex.Message, data.Length, result.RemoteEndPoint);
                     continue;
                 }
 
                 // Check for RTP version 2
                 if (packet.Version != 2)
                 {
-                    _logger.LogDebug("Ignoring non-RTPv2 packet (version={Version})", packet.Version);
+                    versionMismatches++;
+                    if (versionMismatches <= 3)
+                        _logger.LogWarning(
+                            "RTP [default] Non-RTPv2 packet (version={Version}, PT={PT}, {Bytes} bytes from {Remote})",
+                            packet.Version, packet.PayloadType, data.Length, result.RemoteEndPoint);
                     continue;
+                }
+
+                // Log first packet in detail
+                if (firstPacket)
+                {
+                    _logger.LogInformation(
+                        "RTP [default] *** First packet *** from {Remote}: PT={PT}, seq={Seq}, SSRC={Ssrc}, payloadBytes={PayloadLen}, extension={Ext}",
+                        result.RemoteEndPoint, packet.PayloadType, packet.SequenceNumber,
+                        packet.Ssrc, packet.Payload.Length, packet.Extension);
                 }
 
                 // Detect sequence gaps
@@ -94,7 +121,7 @@ public sealed class RtpListenerService : BackgroundService
                     {
                         int gap = ((packet.SequenceNumber - lastSequence) + 65536) % 65536;
                         _logger.LogWarning(
-                            "RTP sequence gap detected: expected {Expected}, got {Got} (gap={Gap})",
+                            "RTP [default] sequence gap: expected {Expected}, got {Got} (gap={Gap})",
                             expectedSeq, packet.SequenceNumber, gap);
                     }
                 }
@@ -124,6 +151,25 @@ public sealed class RtpListenerService : BackgroundService
                     // each browser client can de-interleave and select channels.
                     await _hubContext.Clients.Group("default")
                         .SendAsync("ReceiveAudioChunk", base64, _options.Channels, stoppingToken);
+
+                    totalChunksSent++;
+
+                    if (totalChunksSent == 1)
+                    {
+                        _logger.LogInformation(
+                            "RTP [default] *** First chunk sent *** ({Samples} samples, {Bytes} base64 chars, {Channels}ch)",
+                            chunkSamples.Length, base64.Length, _options.Channels);
+                    }
+                }
+
+                // Periodic stats every 10 seconds
+                var now = DateTimeOffset.UtcNow;
+                if ((now - lastStatsTime).TotalSeconds >= 10)
+                {
+                    _logger.LogInformation(
+                        "RTP [default] Stats: packets={Packets}, chunksSent={Chunks}, parseErrors={ParseErr}, versionMismatch={VerErr}, bufferSamples={BufLen}",
+                        totalPackets, totalChunksSent, parseErrors, versionMismatches, sampleBuffer.Count);
+                    lastStatsTime = now;
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
