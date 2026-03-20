@@ -1,4 +1,4 @@
-namespace RTPTransmitter.Services;
+﻿namespace RTPTransmitter.Services;
 
 /// <summary>
 /// Represents a stream discovered via SAP/SDP announcements.

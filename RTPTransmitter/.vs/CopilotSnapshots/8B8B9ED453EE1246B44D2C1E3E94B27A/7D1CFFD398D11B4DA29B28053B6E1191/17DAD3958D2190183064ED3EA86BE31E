@@ -1,4 +1,4 @@
-namespace RTPTransmitter.Services;
+﻿namespace RTPTransmitter.Services;
 
 /// <summary>
 /// Configuration for the RTP listener service.

@@ -1,4 +1,4 @@
-namespace RTPTransmitter.Services;
+﻿namespace RTPTransmitter.Services;
 
 /// <summary>
 /// Converts raw PCM audio bytes (L16, L24) from AES67 RTP payloads

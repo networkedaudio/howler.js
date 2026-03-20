@@ -1,4 +1,4 @@
-namespace RTPTransmitter.Services;
+﻿namespace RTPTransmitter.Services;
 
 /// <summary>
 /// Converts raw PCM audio bytes (L16, L24) from AES67 RTP payloads
@@ -51,26 +51,6 @@ public static class PcmConverter
     }
 
     /// <summary>
-    /// Convert L32 (32-bit signed big-endian) PCM to interleaved float32 samples.
-    /// The returned array preserves the interleaved channel layout.
-    /// </summary>
-    public static float[] L32ToFloat32(byte[] payload)
-    {
-        int bytesPerSample = 4;
-        int totalSamples = payload.Length / bytesPerSample;
-        var result = new float[totalSamples];
-
-        for (int i = 0; i < totalSamples; i++)
-        {
-            int offset = i * bytesPerSample;
-            int sample = (payload[offset] << 24) | (payload[offset + 1] << 16) | (payload[offset + 2] << 8) | payload[offset + 3];
-            result[i] = sample / 2147483648f;
-        }
-
-        return result;
-    }
-
-    /// <summary>
     /// Detect the PCM format from the RTP payload type and convert accordingly.
     /// AES67 payload types:
     ///   PT 96+ = dynamic (commonly L24 or L16)
@@ -85,21 +65,6 @@ public static class PcmConverter
             10 or 11 => L16ToFloat32(payload),
             >= 96 => L24ToFloat32(payload),
             _ => L16ToFloat32(payload)
-        };
-    }
-
-    /// <summary>
-    /// Convert payload using an explicit bit depth (16, 24, or 32).
-    /// Falls back to <see cref="ConvertPayload(byte[], int)"/> when bit depth is unknown.
-    /// </summary>
-    public static float[] ConvertPayload(byte[] payload, int payloadType, int bitDepth)
-    {
-        return bitDepth switch
-        {
-            16 => L16ToFloat32(payload),
-            24 => L24ToFloat32(payload),
-            32 => L32ToFloat32(payload),
-            _ => ConvertPayload(payload, payloadType)
         };
     }
 

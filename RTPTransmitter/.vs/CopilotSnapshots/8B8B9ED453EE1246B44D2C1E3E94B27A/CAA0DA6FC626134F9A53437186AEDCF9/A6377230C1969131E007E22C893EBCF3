@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using Microsoft.AspNetCore.SignalR;
@@ -175,7 +175,19 @@ public sealed class RtpStreamManager : IDisposable
                 lastSequence = packet.SequenceNumber;
 
                 // Convert payload to float32 samples
-                float[] samples = PcmConverter.ConvertPayload(packet.Payload, packet.PayloadType, stream.BitDepth);
+                float[] samples;
+                if (stream.BitDepth == 24)
+                {
+                    samples = PcmConverter.L24ToFloat32(packet.Payload);
+                }
+                else if (stream.BitDepth == 16)
+                {
+                    samples = PcmConverter.L16ToFloat32(packet.Payload);
+                }
+                else
+                {
+                    samples = PcmConverter.ConvertPayload(packet.Payload, packet.PayloadType);
+                }
 
                 sampleBuffer.AddRange(samples);
                 packetsInChunk++;

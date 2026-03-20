@@ -1,4 +1,4 @@
-namespace RTPTransmitter.Services;
+﻿namespace RTPTransmitter.Services;
 
 /// <summary>
 /// Represents a stream discovered via SAP/SDP announcements.
@@ -46,7 +46,7 @@ public sealed class DiscoveredStream
     public int Channels { get; set; } = 1;
 
     /// <summary>
-    /// PCM bit depth (16, 24, or 32).
+    /// PCM bit depth (16 or 24).
     /// </summary>
     public int BitDepth { get; set; }
 

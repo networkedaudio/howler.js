@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Sockets;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Options;
@@ -102,7 +102,19 @@ public sealed class RtpListenerService : BackgroundService
                 lastSequence = packet.SequenceNumber;
 
                 // Convert payload to float32 samples (preserving interleaved layout)
-                float[] samples = PcmConverter.ConvertPayload(packet.Payload, packet.PayloadType, _options.ForceBitDepth);
+                float[] samples;
+                if (_options.ForceBitDepth == 24)
+                {
+                    samples = PcmConverter.L24ToFloat32(packet.Payload);
+                }
+                else if (_options.ForceBitDepth == 16)
+                {
+                    samples = PcmConverter.L16ToFloat32(packet.Payload);
+                }
+                else
+                {
+                    samples = PcmConverter.ConvertPayload(packet.Payload, packet.PayloadType);
+                }
 
                 sampleBuffer.AddRange(samples);
                 packetsInChunk++;

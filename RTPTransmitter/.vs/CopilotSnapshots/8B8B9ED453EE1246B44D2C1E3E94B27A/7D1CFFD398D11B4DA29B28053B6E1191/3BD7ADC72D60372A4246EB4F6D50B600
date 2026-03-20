@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Text.RegularExpressions;
 
 namespace RTPTransmitter.Services;
@@ -182,7 +182,6 @@ public static partial class SdpParser
         // Infer bit depth from codec name
         session.BitDepth = session.Codec.ToUpperInvariant() switch
         {
-            "L32" => 32,
             "L24" => 24,
             "L16" => 16,
             "L8" => 8,
