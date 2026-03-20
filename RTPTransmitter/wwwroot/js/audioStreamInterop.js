@@ -20,6 +20,9 @@ window.AudioStreamInterop = (function () {
     var _debug = false;
     var _debugChunkInterval = 100;
     var _statsLogTimer = null;
+    var _channelLevels = [];
+    var _receiving = false;
+    var _lastChunkTime = 0;
     var _stats = {
         chunksReceived: 0,
         chunksPlayed: 0,
@@ -54,6 +57,9 @@ window.AudioStreamInterop = (function () {
 
         _debug = !!debug;
         _stats = { chunksReceived: 0, chunksPlayed: 0, errors: 0 };
+        _channelLevels = new Array(_sourceChannels).fill(0);
+        _receiving = false;
+        _lastChunkTime = 0;
 
         console.log('[AudioStreamInterop] Initialized: sampleRate=' + sampleRate +
             ', sourceChannels=' + _sourceChannels +
@@ -238,6 +244,22 @@ window.AudioStreamInterop = (function () {
 
         // Feed into HowlerStream (de-interleaving happens inside based on channelMap)
         _stream.addChunk(float32);
+
+        // Compute per-channel peak levels for the UI meters
+        _lastChunkTime = Date.now();
+        _receiving = true;
+        if (_sourceChannels > 0) {
+            var frames = Math.floor(float32.length / _sourceChannels);
+            // Smooth decay: keep 30% of previous level, blend 70% of new peak
+            for (var ch = 0; ch < _sourceChannels; ch++) {
+                var peak = 0;
+                for (var f = 0; f < frames; f++) {
+                    var val = Math.abs(float32[f * _sourceChannels + ch]);
+                    if (val > peak) peak = val;
+                }
+                _channelLevels[ch] = Math.max(peak, (_channelLevels[ch] || 0) * 0.3);
+            }
+        }
     }
 
     /**
@@ -343,9 +365,18 @@ window.AudioStreamInterop = (function () {
      * @returns {object}
      */
     function getStats() {
+        // Mark as not receiving if no chunk in the last 2 seconds
+        if (_receiving && (Date.now() - _lastChunkTime) > 2000) {
+            _receiving = false;
+            for (var i = 0; i < _channelLevels.length; i++) {
+                _channelLevels[i] = 0;
+            }
+        }
         return Object.assign({}, _stats, {
             sourceChannels: _sourceChannels,
-            channelMap: _channelMap.slice()
+            channelMap: _channelMap.slice(),
+            channelLevels: _channelLevels.slice(),
+            receiving: _receiving
         });
     }
 

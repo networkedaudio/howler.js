@@ -1,0 +1,45 @@
+@* 
+    A circular level indicator for an audio channel.
+    - Border: green when the stream is receiving packets, gray when idle.
+    - Fill: green with opacity proportional to the audio level on that channel.
+*@
+
+<div style="@ComputedStyle" title="@Title"></div>
+
+@code {
+    /// <summary>
+    /// Whether the stream is actively receiving packets.
+    /// Controls the border color (green = active, gray = idle).
+    /// </summary>
+    [Parameter]
+    public bool IsActive { get; set; }
+
+    /// <summary>
+    /// Audio level for this channel (0.0 – 1.0).
+    /// Controls the opacity of the green fill.
+    /// </summary>
+    [Parameter]
+    public double Level { get; set; }
+
+    /// <summary>
+    /// Diameter of the circle in pixels. Default: 24.
+    /// </summary>
+    [Parameter]
+    public int Size { get; set; } = 24;
+
+    private string BorderColor => IsActive ? "#4caf50" : "#9e9e9e";
+
+    private string FillOpacity => Math.Clamp(Level, 0, 1).ToString("F2", System.Globalization.CultureInfo.InvariantCulture);
+
+    private string Title => IsActive
+        ? $"Active – level {Level:P0}"
+        : "Idle";
+
+    private string ComputedStyle =>
+        $"width:{Size}px;height:{Size}px;" +
+        $"border-radius:50%;" +
+        $"border:3px solid {BorderColor};" +
+        $"background-color:rgba(76,175,80,{FillOpacity});" +
+        $"display:inline-block;" +
+        $"transition:background-color 0.15s ease,border-color 0.3s ease;";
+}

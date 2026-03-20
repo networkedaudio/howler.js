@@ -2,6 +2,7 @@
 @rendermode InteractiveServer
 @using Microsoft.AspNetCore.WebUtilities
 @using Microsoft.Extensions.Options
+@using RTPTransmitter.Components.Shared
 @using RTPTransmitter.Services
 @inject IJSRuntime JS
 @inject IOptions<RtpListenerOptions> RtpOptions
@@ -101,45 +102,47 @@
 
         @if (sourceChannels > 0)
         {
-            <div class="table-responsive">
-                <table class="table table-sm table-bordered align-middle" style="max-width: 600px;">
-                    <thead>
-                        <tr>
-                            <th>Source Ch</th>
-                            <th>Assign</th>
-                            <th style="width:80px;">Solo</th>
+            <MudSimpleTable Style="max-width: 700px;" Dense="true" Hover="true" Bordered="true">
+                <thead>
+                    <tr>
+                        <th>Source Ch</th>
+                        <th>Assign</th>
+                        <th style="width:80px;">Solo</th>
+                        <th style="width:60px; text-align:center;">Level</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @for (int i = 0; i < sourceChannels; i++)
+                    {
+                        int ch = i;
+                        string assignment = GetChannelAssignment(ch);
+                        <tr class="@(assignment != "Off" ? "mud-theme-primary" : "")" style="@(assignment != "Off" ? "background-color: var(--mud-palette-primary-lighten, rgba(var(--mud-palette-primary-rgb),0.08));" : "")">
+                            <td><strong>@(ch + 1)</strong> <span class="text-muted small">(index @ch)</span></td>
+                            <td>
+                                <MudSelect T="string" Value="@assignment" ValueChanged="v => OnChannelAssignmentChanged(ch, v)"
+                                           Variant="Variant.Outlined" Dense="true" Margin="Margin.Dense"
+                                           Disabled="@(!isStreaming)" Style="max-width:130px;">
+                                    <MudSelectItem Value="@("Off")">Off</MudSelectItem>
+                                    <MudSelectItem Value="@("Left")">Left</MudSelectItem>
+                                    <MudSelectItem Value="@("Right")">Right</MudSelectItem>
+                                    <MudSelectItem Value="@("Mono")">Mono</MudSelectItem>
+                                </MudSelect>
+                            </td>
+                            <td>
+                                <MudIconButton Icon="@(IsSoloed(ch) ? Icons.Material.Filled.VolumeUp : Icons.Material.Outlined.VolumeUp)"
+                                               Color="@(IsSoloed(ch) ? Color.Warning : Color.Default)"
+                                               Size="MudBlazor.Size.Small"
+                                               OnClick="() => SoloChannel(ch)"
+                                               Disabled="@(!isStreaming)" />
+                            </td>
+                            <td style="text-align:center; vertical-align:middle;">
+                                <ChannelLevelIndicator IsActive="@(isReceiving && isStreaming)"
+                                                       Level="@GetChannelLevel(ch)" />
+                            </td>
                         </tr>
-                    </thead>
-                    <tbody>
-                        @for (int i = 0; i < sourceChannels; i++)
-                        {
-                            int ch = i;
-                            string assignment = GetChannelAssignment(ch);
-                            <tr class="@(assignment != "Off" ? "table-active" : "")">
-                                <td><strong>@(ch + 1)</strong> <span class="text-muted small">(index @ch)</span></td>
-                                <td>
-                                    <select class="form-select form-select-sm" style="width:120px;"
-                                            value="@assignment"
-                                            @onchange="e => OnChannelAssignmentChanged(ch, e.Value?.ToString())"
-                                            disabled="@(!isStreaming)">
-                                        <option value="Off">Off</option>
-                                        <option value="Left">Left</option>
-                                        <option value="Right">Right</option>
-                                        <option value="Mono">Mono</option>
-                                    </select>
-                                </td>
-                                <td>
-                                    <button class="btn btn-sm @(IsSoloed(ch) ? "btn-warning" : "btn-outline-secondary")"
-                                            @onclick="() => SoloChannel(ch)"
-                                            disabled="@(!isStreaming)">
-                                        S
-                                    </button>
-                                </td>
-                            </tr>
-                        }
-                    </tbody>
-                </table>
-            </div>
+                    }
+                </tbody>
+            </MudSimpleTable>
 
             <div class="mt-2">
                 <span class="text-muted">Current output: </span>
@@ -224,6 +227,8 @@
     private int chunksReceived = 0;
     private int chunksPlayed = 0;
     private int errors = 0;
+    private bool isReceiving = false;
+    private double[] channelLevels = [];
     private System.Timers.Timer? statsTimer;
 
     // Channel assignment state: maps source channel index -> "Off"/"Left"/"Right"/"Mono"
@@ -272,6 +277,7 @@
         }
 
         // Initialize default assignments
+        channelLevels = new double[sourceChannels];
         for (int i = 0; i < sourceChannels; i++)
         {
             channelAssignments[i] = "Off";
@@ -332,6 +338,9 @@
     }
 
     private bool IsSoloed(int ch) => soloChannel.HasValue && soloChannel.Value == ch;
+
+    private double GetChannelLevel(int ch) =>
+        ch >= 0 && ch < channelLevels.Length ? channelLevels[ch] : 0;
 
     private async Task SoloChannel(int ch)
     {
@@ -441,12 +450,25 @@
                     if (reported != sourceChannels && reported > 0)
                     {
                         sourceChannels = reported;
+                        channelLevels = new double[sourceChannels];
                         // Expand assignments if new channels appeared
                         for (int i = 0; i < sourceChannels; i++)
                         {
                             if (!channelAssignments.ContainsKey(i))
                                 channelAssignments[i] = "Off";
                         }
+                    }
+                }
+                if (stats.TryGetProperty("receiving", out var rv))
+                    isReceiving = rv.GetBoolean();
+                if (stats.TryGetProperty("channelLevels", out var cl) && cl.ValueKind == System.Text.Json.JsonValueKind.Array)
+                {
+                    int idx = 0;
+                    foreach (var lv in cl.EnumerateArray())
+                    {
+                        if (idx < channelLevels.Length)
+                            channelLevels[idx] = lv.GetDouble();
+                        idx++;
                     }
                 }
                 await InvokeAsync(StateHasChanged);

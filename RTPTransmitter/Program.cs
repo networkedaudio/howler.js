@@ -1,3 +1,4 @@
+using MudBlazor.Services;
 using RTPTransmitter.Components;
 using RTPTransmitter.Hubs;
 using RTPTransmitter.Services;
@@ -7,6 +8,8 @@ var builder = WebApplication.CreateBuilder(args);
 // Add services to the container.
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
+
+builder.Services.AddMudServices();
 
 // Configure SignalR with larger message size for audio chunks
 builder.Services.AddSignalR(options =>
