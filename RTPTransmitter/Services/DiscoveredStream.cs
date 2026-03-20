@@ -89,4 +89,10 @@ public sealed class DiscoveredStream
     /// Raw SDP text for reference.
     /// </summary>
     public string RawSdp { get; set; } = string.Empty;
+
+    /// <summary>
+    /// True if this stream was manually added (e.g. from an uploaded SDP file)
+    /// rather than discovered via SAP.
+    /// </summary>
+    public bool IsManual { get; set; }
 }

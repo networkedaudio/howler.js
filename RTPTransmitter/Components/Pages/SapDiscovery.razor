@@ -1,9 +1,11 @@
 @page "/sapdiscovery"
 @rendermode InteractiveServer
 @using RTPTransmitter.Services
+@using RTPTransmitter.Components.Shared
 @inject SapStreamRegistry Registry
 @inject RtpStreamManager StreamManager
 @inject NetworkInterfaceService NicService
+@inject IDialogService DialogService
 @inject IJSRuntime JS
 @implements IDisposable
 
@@ -43,170 +45,172 @@
     </div>
 </div>
 
-<div class="card mb-4">
-    <div class="card-body">
-        <div class="d-flex justify-content-between align-items-center mb-3">
-            <h5 class="card-title mb-0">Discovered Streams (@streams.Count)</h5>
-            <button class="btn btn-sm btn-outline-secondary" @onclick="RefreshStreams">
-                <span class="bi bi-arrow-clockwise" aria-hidden="true"></span> Refresh
-            </button>
-        </div>
-
-        @if (streams.Count == 0)
+@* ── SDP File Upload ── *@
+<MudPaper Elevation="1" Class="pa-4 mb-4">
+    <div class="d-flex align-items-center gap-3 mb-2">
+        <MudIcon Icon="@Icons.Material.Filled.UploadFile" />
+        <MudText Typo="Typo.h6">Import SDP File</MudText>
+    </div>
+    <MudText Typo="Typo.body2" Class="mb-3">
+        Upload an <code>.sdp</code> text file to manually add a stream to the discovery table.
+    </MudText>
+    <div class="d-flex align-items-center gap-3">
+        <MudFileUpload T="IBrowserFile" Accept=".sdp,.txt" FilesChanged="OnSdpFileUploaded" MaximumFileCount="1">
+            <ActivatorContent>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.CloudUpload">
+                    Choose SDP File
+                </MudButton>
+            </ActivatorContent>
+        </MudFileUpload>
+        @if (!string.IsNullOrEmpty(uploadStatus))
         {
-            <div class="alert alert-info mb-0">
-                <strong>Listening for SAP announcements...</strong>
-                <br />
-                No AES67/SAP streams have been discovered yet on the network.
-                Streams will appear automatically as they are announced.
-            </div>
-        }
-        else
-        {
-            <div class="table-responsive">
-                <table class="table table-striped table-hover align-middle">
-                    <thead class="table-dark">
-                        <tr>
-                            <th>Name</th>
-                            <th>Multicast</th>
-                            <th>Port</th>
-                            <th>Codec</th>
-                            <th>Rate</th>
-                            <th>Ch</th>
-                            <th>Bits</th>
-                            <th>ptime</th>
-                            <th>Source</th>
-                            <th>Last Seen</th>
-                            <th class="text-center">Action</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var stream in streams)
-                        {
-                            bool isActive = StreamManager.IsActive(stream.Id);
-                            <tr class="@(isActive ? "table-success" : "")">
-                                <td>
-                                    <strong>@stream.Name</strong>
-                                    @if (!string.IsNullOrEmpty(stream.Description))
-                                    {
-                                        <br /><small class="text-muted">@stream.Description</small>
-                                    }
-                                </td>
-                                <td><code>@stream.MulticastGroup</code></td>
-                                <td>@stream.Port</td>
-                                <td><span class="badge bg-info text-dark">@stream.Codec</span></td>
-                                <td>@(stream.SampleRate / 1000)k</td>
-                                <td>@stream.Channels</td>
-                                <td>@stream.BitDepth</td>
-                                <td>@(stream.PtimeMs > 0 ? $"{stream.PtimeMs}ms" : "—")</td>
-                                <td><small>@stream.OriginatingSource</small></td>
-                                <td><small>@FormatAge(stream.LastSeen)</small></td>
-                                <td class="text-center">
-                                    @if (isActive)
-                                    {
-                                        <div class="btn-group btn-group-sm">
-                                            <button class="btn btn-success btn-sm" disabled>
-                                                ● Listening
-                                            </button>
-                                            <button class="btn btn-outline-danger btn-sm"
-                                                    @onclick="() => StopStream(stream.Id)"
-                                                    disabled="@isProcessing">
-                                                Stop
-                                            </button>
-                                            <a class="btn btn-outline-primary btn-sm"
-                                               href="@($"audiostream?stream={stream.Id}")">
-                                                Open Player
-                                            </a>
-                                        </div>
-                                    }
-                                    else
-                                    {
-                                        <button class="btn btn-primary btn-sm"
-                                                @onclick="() => StartStream(stream)"
-                                                disabled="@isProcessing">
-                                            ▶ Listen
-                                        </button>
-                                    }
-                                </td>
-                            </tr>
-                        }
-                    </tbody>
-                </table>
-            </div>
+            <MudChip T="string" Color="@uploadStatusColor" Size="Size.Small">@uploadStatus</MudChip>
         }
     </div>
-</div>
+</MudPaper>
 
+@* ── Discovered Streams Table ── *@
+<MudPaper Elevation="1" Class="pa-4 mb-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <MudText Typo="Typo.h6">Discovered Streams (@streams.Count)</MudText>
+        <MudIconButton Icon="@Icons.Material.Filled.Refresh" Size="Size.Small"
+                       OnClick="() => RefreshStreams()" Title="Refresh" />
+    </div>
+
+    @if (streams.Count == 0)
+    {
+        <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true">
+            <strong>Listening for SAP announcements…</strong><br />
+            No AES67/SAP streams have been discovered yet. Streams will appear automatically as they are announced,
+            or you can import an SDP file above.
+        </MudAlert>
+    }
+    else
+    {
+        <MudTable Items="@streams" Dense="true" Hover="true" Bordered="true" Striped="true"
+                  Breakpoint="Breakpoint.Sm" RowClass="align-middle">
+            <HeaderContent>
+                <MudTh>Name</MudTh>
+                <MudTh>Multicast</MudTh>
+                <MudTh>Port</MudTh>
+                <MudTh>Codec</MudTh>
+                <MudTh>Rate</MudTh>
+                <MudTh>Ch</MudTh>
+                <MudTh>Bits</MudTh>
+                <MudTh>ptime</MudTh>
+                <MudTh>Source</MudTh>
+                <MudTh>Last Seen</MudTh>
+                <MudTh Style="text-align:center;">SDP</MudTh>
+                <MudTh Style="text-align:center;">Action</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Name">
+                    <strong>@context.Name</strong>
+                    @if (!string.IsNullOrEmpty(context.Description))
+                    {
+                        <br /><MudText Typo="Typo.caption" Color="Color.Secondary">@context.Description</MudText>
+                    }
+                    @if (context.IsManual)
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Info" Class="ml-1">Uploaded</MudChip>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Multicast"><code>@context.MulticastGroup</code></MudTd>
+                <MudTd DataLabel="Port">@context.Port</MudTd>
+                <MudTd DataLabel="Codec"><MudChip T="string" Size="Size.Small" Color="Color.Info">@context.Codec</MudChip></MudTd>
+                <MudTd DataLabel="Rate">@(context.SampleRate / 1000)k</MudTd>
+                <MudTd DataLabel="Ch">@context.Channels</MudTd>
+                <MudTd DataLabel="Bits">@context.BitDepth</MudTd>
+                <MudTd DataLabel="ptime">@(context.PtimeMs > 0 ? $"{context.PtimeMs}ms" : "—")</MudTd>
+                <MudTd DataLabel="Source"><MudText Typo="Typo.caption">@context.OriginatingSource</MudText></MudTd>
+                <MudTd DataLabel="Last Seen"><MudText Typo="Typo.caption">@FormatAge(context.LastSeen)</MudText></MudTd>
+                <MudTd DataLabel="SDP" Style="text-align:center;">
+                    <MudIconButton Icon="@Icons.Material.Filled.Description"
+                                   Size="Size.Small" Color="Color.Default"
+                                   OnClick="() => ShowSdpDialog(context)"
+                                   Title="View SDP" />
+                </MudTd>
+                <MudTd DataLabel="Action" Style="text-align:center;">
+                    @{ bool isActive = StreamManager.IsActive(context.Id); }
+                    @if (isActive)
+                    {
+                        <div class="d-flex gap-1 justify-center">
+                            <MudChip T="string" Size="Size.Small" Color="Color.Success">● Listening</MudChip>
+                            <MudButton Variant="Variant.Outlined" Color="Color.Error" Size="Size.Small"
+                                       OnClick="() => StopStream(context.Id)" Disabled="isProcessing">
+                                Stop
+                            </MudButton>
+                            <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small"
+                                       Href="@($"audiostream?stream={context.Id}")">
+                                Open Player
+                            </MudButton>
+                        </div>
+                    }
+                    else
+                    {
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                                   OnClick="() => StartStream(context)" Disabled="isProcessing"
+                                   StartIcon="@Icons.Material.Filled.PlayArrow">
+                            Listen
+                        </MudButton>
+                    }
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+    }
+</MudPaper>
+
+@* ── Active Listeners Table ── *@
 @if (activeStreams.Count > 0)
 {
-    <div class="card mb-4">
-        <div class="card-body">
-            <h5 class="card-title">Active Listeners (@activeStreams.Count)</h5>
-            <div class="table-responsive">
-                <table class="table table-sm">
-                    <thead>
-                        <tr>
-                            <th>Name</th>
-                            <th>Multicast</th>
-                            <th>Port</th>
-                            <th>Format</th>
-                            <th>Since</th>
-                            <th class="text-center">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var active in activeStreams)
-                        {
-                            <tr>
-                                <td><strong>@active.Name</strong></td>
-                                <td><code>@active.MulticastGroup</code></td>
-                                <td>@active.Port</td>
-                                <td>@(active.BitDepth)bit / @(active.SampleRate / 1000)kHz / @(active.Channels)ch</td>
-                                <td><small>@FormatAge(active.StartedAt)</small></td>
-                                <td class="text-center">
-                                    <div class="btn-group btn-group-sm">
-                                        <a class="btn btn-outline-primary btn-sm"
-                                           href="@($"audiostream?stream={active.StreamId}")">
-                                            Open Player
-                                        </a>
-                                        <button class="btn btn-outline-danger btn-sm"
-                                                @onclick="() => StopStream(active.StreamId)"
-                                                disabled="@isProcessing">
-                                            Stop
-                                        </button>
-                                    </div>
-                                </td>
-                            </tr>
-                        }
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </div>
-}
-
-@if (selectedStreamSdp != null)
-{
-    <div class="card mb-4">
-        <div class="card-body">
-            <div class="d-flex justify-content-between align-items-center mb-2">
-                <h5 class="card-title mb-0">SDP Details</h5>
-                <button class="btn btn-sm btn-outline-secondary" @onclick="() => selectedStreamSdp = null">Close</button>
-            </div>
-            <pre class="bg-dark text-light p-3 rounded" style="font-size: 0.85em; max-height: 400px; overflow-y: auto;">@selectedStreamSdp</pre>
-        </div>
-    </div>
+    <MudPaper Elevation="1" Class="pa-4 mb-4">
+        <MudText Typo="Typo.h6" Class="mb-3">Active Listeners (@activeStreams.Count)</MudText>
+        <MudTable Items="@activeStreams" Dense="true" Hover="true" Bordered="true"
+                  Breakpoint="Breakpoint.Sm">
+            <HeaderContent>
+                <MudTh>Name</MudTh>
+                <MudTh>Multicast</MudTh>
+                <MudTh>Port</MudTh>
+                <MudTh>Format</MudTh>
+                <MudTh>Since</MudTh>
+                <MudTh Style="text-align:center;">Actions</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Name"><strong>@context.Name</strong></MudTd>
+                <MudTd DataLabel="Multicast"><code>@context.MulticastGroup</code></MudTd>
+                <MudTd DataLabel="Port">@context.Port</MudTd>
+                <MudTd DataLabel="Format">@(context.BitDepth)bit / @(context.SampleRate / 1000)kHz / @(context.Channels)ch</MudTd>
+                <MudTd DataLabel="Since"><MudText Typo="Typo.caption">@FormatAge(context.StartedAt)</MudText></MudTd>
+                <MudTd DataLabel="Actions" Style="text-align:center;">
+                    <div class="d-flex gap-1 justify-center">
+                        <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small"
+                                   Href="@($"audiostream?stream={context.StreamId}")">
+                            Open Player
+                        </MudButton>
+                        <MudButton Variant="Variant.Outlined" Color="Color.Error" Size="Size.Small"
+                                   OnClick="() => StopStream(context.StreamId)" Disabled="isProcessing">
+                            Stop
+                        </MudButton>
+                    </div>
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+    </MudPaper>
 }
 
 @code {
     private List<DiscoveredStream> streams = new();
     private List<RtpStreamManager.ActiveStream> activeStreams = new();
-    private string? selectedStreamSdp;
     private bool isProcessing;
     private System.Threading.Timer? refreshTimer;
 
     private IReadOnlyList<NicInfo> availableNics = [];
     private string selectedNic = "0.0.0.0";
+
+    // SDP file upload state
+    private string? uploadStatus;
+    private Color uploadStatusColor = Color.Default;
 
     protected override void OnInitialized()
     {
@@ -256,6 +260,97 @@
         activeStreams = StreamManager.GetActiveStreams().ToList();
     }
 
+    // ── SDP Viewer Dialog ──
+
+    private async Task ShowSdpDialog(DiscoveredStream stream)
+    {
+        var parameters = new DialogParameters<SdpViewerDialog>
+        {
+            { x => x.Stream, stream }
+        };
+
+        var options = new DialogOptions
+        {
+            MaxWidth = MaxWidth.Medium,
+            FullWidth = true,
+            CloseOnEscapeKey = true
+        };
+
+        await DialogService.ShowAsync<SdpViewerDialog>("SDP Viewer", parameters, options);
+    }
+
+    // ── SDP File Upload ──
+
+    private async Task OnSdpFileUploaded(IBrowserFile file)
+    {
+        uploadStatus = null;
+
+        try
+        {
+            if (file.Size > 64 * 1024)
+            {
+                uploadStatus = "File too large (max 64 KB)";
+                uploadStatusColor = Color.Error;
+                return;
+            }
+
+            using var reader = new StreamReader(file.OpenReadStream(maxAllowedSize: 64 * 1024));
+            var sdpText = await reader.ReadToEndAsync();
+
+            if (string.IsNullOrWhiteSpace(sdpText))
+            {
+                uploadStatus = "File is empty";
+                uploadStatusColor = Color.Error;
+                return;
+            }
+
+            var sdp = SdpParser.Parse(sdpText);
+            if (sdp == null || !sdp.IsValidAudioStream)
+            {
+                uploadStatus = "Invalid SDP — no valid audio stream found";
+                uploadStatusColor = Color.Error;
+                return;
+            }
+
+            // Create a unique ID for the manually-added stream
+            var manualId = $"manual:{sdp.SessionName}:{sdp.MulticastAddress}:{sdp.Port}";
+
+            var stream = new DiscoveredStream
+            {
+                Id = manualId,
+                Name = !string.IsNullOrWhiteSpace(sdp.SessionName) ? sdp.SessionName : file.Name,
+                Description = sdp.SessionDescription,
+                MulticastGroup = sdp.MulticastAddress,
+                SourceAddress = sdp.SourceAddress,
+                Port = sdp.Port,
+                SampleRate = sdp.SampleRate,
+                Channels = sdp.Channels,
+                BitDepth = sdp.BitDepth,
+                PayloadType = sdp.PayloadType,
+                Codec = sdp.Codec,
+                PtimeMs = sdp.PtimeMs,
+                OriginatingSource = "File upload",
+                Origin = sdp.Origin,
+                RawSdp = sdp.RawSdp,
+                IsManual = true,
+                LastSeen = DateTimeOffset.UtcNow
+            };
+
+            Registry.AddOrUpdate(stream);
+            RefreshStreams();
+
+            uploadStatus = $"Added \"{stream.Name}\"";
+            uploadStatusColor = Color.Success;
+        }
+        catch (Exception ex)
+        {
+            uploadStatus = $"Error: {ex.Message}";
+            uploadStatusColor = Color.Error;
+        }
+    }
+
+    // ── Stream Control ──
+
     private async Task StartStream(DiscoveredStream stream)
     {
         isProcessing = true;
@@ -266,7 +361,6 @@
         }
         catch (Exception ex)
         {
-            // Log error - in a real app you'd show a toast/alert
             Console.Error.WriteLine($"Error starting stream: {ex.Message}");
         }
         finally
