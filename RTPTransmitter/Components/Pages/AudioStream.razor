@@ -299,6 +299,9 @@
 
     private async Task StartStream()
     {
+        // Must be called first from a user gesture (button click) to unlock
+        // the browser AudioContext before initializing the stream.
+        await JS.InvokeVoidAsync("AudioStreamInterop.ensureAudioContext");
         await JS.InvokeVoidAsync("AudioStreamInterop.initialize",
             sampleRate, sourceChannels, currentChannelMap, bufferSize, debug);
         await JS.InvokeVoidAsync("AudioStreamInterop.connect", "/audiohub", activeStreamId);

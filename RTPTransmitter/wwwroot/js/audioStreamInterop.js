@@ -30,6 +30,32 @@ window.AudioStreamInterop = (function () {
     };
 
     /**
+     * Ensure the Web Audio AudioContext exists and is running.
+     * Must be called from a user-gesture context (click/tap handler)
+     * to satisfy browser autoplay policy. Call this before initialize
+     * or connect to guarantee audio will play.
+     */
+    function ensureAudioContext() {
+        // Ask Howler to set up its AudioContext if it hasn't already.
+        if (typeof Howler !== 'undefined') {
+            if (!Howler.ctx) {
+                Howler._setup();
+                console.log('[AudioStreamInterop] ensureAudioContext: Howler._setup() called, ctx=' + (!!Howler.ctx));
+            }
+            if (Howler.ctx && Howler.ctx.state === 'suspended') {
+                Howler.ctx.resume().then(function () {
+                    console.log('[AudioStreamInterop] ensureAudioContext: AudioContext resumed');
+                });
+            }
+            if (Howler.ctx) {
+                console.log('[AudioStreamInterop] ensureAudioContext: ctx.state=' + Howler.ctx.state);
+            }
+        } else {
+            console.warn('[AudioStreamInterop] ensureAudioContext: Howler not available');
+        }
+    }
+
+    /**
      * Initialize the audio stream player with Howler.
      * @param {number}  sampleRate      Sample rate (e.g. 48000).
      * @param {number}  sourceChannels  Total channels in the AES67 stream.
@@ -39,6 +65,8 @@ window.AudioStreamInterop = (function () {
      * @param {boolean} debug           Enable debug logging.
      */
     function initialize(sampleRate, sourceChannels, channelMap, bufferSize, debug) {
+        // Ensure AudioContext is alive before creating the stream.
+        ensureAudioContext();
         if (_stream) {
             _stream.destroy();
         }
@@ -381,6 +409,7 @@ window.AudioStreamInterop = (function () {
     }
 
     return {
+        ensureAudioContext: ensureAudioContext,
         initialize: initialize,
         connect: connect,
         addChunk: processChunk,

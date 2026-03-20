@@ -184,8 +184,15 @@
       var self = this;
       var ctx = self._ctx();
       if (!ctx) {
-        self.log('addChunk skipped — AudioContext is null');
-        return;
+        // Try one more time — a user gesture may have occurred since init.
+        if (typeof Howler !== 'undefined' && !Howler.ctx) {
+          Howler._setup();
+        }
+        ctx = self._ctx();
+        if (!ctx) {
+          self.log('addChunk skipped — AudioContext is null');
+          return;
+        }
       }
 
       if (self.isPlaying && self.chunks.length > self.bufferSize) {
@@ -369,7 +376,13 @@
     addChunk: function(data) {
       var self = this;
 
-      // Resume the context if needed (e.g. after user gesture).
+      // Attempt to create / resume the AudioContext if it's missing.
+      // This can happen when the stream was initialised before a user
+      // gesture unlocked audio.  By the time addChunk is called the
+      // page has likely received a gesture so _setup() should succeed.
+      if (!Howler.ctx) {
+        Howler._setup();
+      }
       if (Howler.ctx && Howler.ctx.state === 'suspended') {
         Howler.ctx.resume();
       }
