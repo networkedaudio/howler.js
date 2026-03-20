@@ -58,15 +58,16 @@
                     <td><strong>Channels</strong></td>
                     <td>@Stream.Channels</td>
                 </tr>
-                @if (Stream.ChannelLabels.Count > 0)
+                @if (Stream.Channels > 0)
                 {
                     <tr>
                         <td><strong>Channel Labels</strong></td>
                         <td>
-                            @for (int i = 0; i < Stream.ChannelLabels.Count; i++)
+                            @for (int i = 0; i < Stream.Channels; i++)
                             {
+                                var label = i < Stream.ChannelLabels.Count ? Stream.ChannelLabels[i] : $"Channel {i + 1}";
                                 <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary" Class="mr-1 mb-1">
-                                    @(i + 1): @Stream.ChannelLabels[i]
+                                    @(i + 1): @label
                                 </MudChip>
                             }
                         </td>
