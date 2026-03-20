@@ -23,35 +23,77 @@ window.AudioStreamInterop = (function () {
     var _channelLevels = [];
     var _receiving = false;
     var _lastChunkTime = 0;
+    var _audioUnlocked = false;
     var _stats = {
         chunksReceived: 0,
         chunksPlayed: 0,
         errors: 0
     };
 
+    // Register a one-time document-level click/touch/keydown handler to
+    // unlock the AudioContext on the very first user gesture.  Browsers
+    // require a "user activation" event before allowing AudioContext
+    // creation — Blazor Server's JS interop calls (via SignalR) do NOT
+    // count because they arrive asynchronously.
+    function _onFirstUserGesture() {
+        if (_audioUnlocked) return;
+        _audioUnlocked = true;
+
+        _unlockAudioContext();
+
+        document.removeEventListener('click', _onFirstUserGesture, true);
+        document.removeEventListener('touchend', _onFirstUserGesture, true);
+        document.removeEventListener('keydown', _onFirstUserGesture, true);
+    }
+
+    function _unlockAudioContext() {
+        if (typeof Howler === 'undefined') return;
+
+        if (!Howler.ctx) {
+            try {
+                if (typeof AudioContext !== 'undefined') {
+                    Howler.ctx = new AudioContext();
+                } else if (typeof webkitAudioContext !== 'undefined') {
+                    Howler.ctx = new webkitAudioContext();
+                }
+            } catch (e) {
+                console.error('[AudioStreamInterop] _unlockAudioContext: failed', e);
+                return;
+            }
+
+            if (Howler.ctx) {
+                Howler.masterGain = (typeof Howler.ctx.createGain === 'undefined')
+                    ? Howler.ctx.createGainNode()
+                    : Howler.ctx.createGain();
+                Howler.masterGain.gain.setValueAtTime(
+                    Howler._muted ? 0 : (Howler._volume || 1),
+                    Howler.ctx.currentTime);
+                Howler.masterGain.connect(Howler.ctx.destination);
+                Howler.usingWebAudio = true;
+                console.log('[AudioStreamInterop] AudioContext created via user gesture (sampleRate=' + Howler.ctx.sampleRate + ')');
+            }
+        }
+
+        if (Howler.ctx && Howler.ctx.state === 'suspended') {
+            Howler.ctx.resume();
+        }
+    }
+
+    document.addEventListener('click', _onFirstUserGesture, true);
+    document.addEventListener('touchend', _onFirstUserGesture, true);
+    document.addEventListener('keydown', _onFirstUserGesture, true);
+
     /**
      * Ensure the Web Audio AudioContext exists and is running.
-     * Must be called from a user-gesture context (click/tap handler)
-     * to satisfy browser autoplay policy. Call this before initialize
-     * or connect to guarantee audio will play.
+     * Called from Blazor before initialize/connect. Also auto-called
+     * by the document-level user-gesture listener above.
      */
     function ensureAudioContext() {
-        // Ask Howler to set up its AudioContext if it hasn't already.
-        if (typeof Howler !== 'undefined') {
-            if (!Howler.ctx) {
-                Howler._setup();
-                console.log('[AudioStreamInterop] ensureAudioContext: Howler._setup() called, ctx=' + (!!Howler.ctx));
-            }
-            if (Howler.ctx && Howler.ctx.state === 'suspended') {
-                Howler.ctx.resume().then(function () {
-                    console.log('[AudioStreamInterop] ensureAudioContext: AudioContext resumed');
-                });
-            }
-            if (Howler.ctx) {
-                console.log('[AudioStreamInterop] ensureAudioContext: ctx.state=' + Howler.ctx.state);
-            }
+        _unlockAudioContext();
+        if (Howler.ctx) {
+            console.log('[AudioStreamInterop] ensureAudioContext: ctx.state=' + Howler.ctx.state);
         } else {
-            console.warn('[AudioStreamInterop] ensureAudioContext: Howler not available');
+            console.warn('[AudioStreamInterop] ensureAudioContext: AudioContext is still null');
         }
     }
 

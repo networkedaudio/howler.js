@@ -184,9 +184,27 @@
       var self = this;
       var ctx = self._ctx();
       if (!ctx) {
-        // Try one more time — a user gesture may have occurred since init.
+        // Try one more time — create the AudioContext directly since
+        // Howler._setup() does not call the private setupAudioContext().
         if (typeof Howler !== 'undefined' && !Howler.ctx) {
-          Howler._setup();
+          try {
+            if (typeof AudioContext !== 'undefined') {
+              Howler.ctx = new AudioContext();
+            } else if (typeof webkitAudioContext !== 'undefined') {
+              Howler.ctx = new webkitAudioContext();
+            }
+            if (Howler.ctx) {
+              Howler.masterGain = (typeof Howler.ctx.createGain === 'undefined')
+                ? Howler.ctx.createGainNode()
+                : Howler.ctx.createGain();
+              Howler.masterGain.gain.setValueAtTime(Howler._muted ? 0 : (Howler._volume || 1), Howler.ctx.currentTime);
+              Howler.masterGain.connect(Howler.ctx.destination);
+              Howler.usingWebAudio = true;
+            }
+          } catch (e) { /* browser does not support Web Audio */ }
+        }
+        if (Howler.ctx && Howler.ctx.state === 'suspended') {
+          Howler.ctx.resume();
         }
         ctx = self._ctx();
         if (!ctx) {
@@ -376,12 +394,25 @@
     addChunk: function(data) {
       var self = this;
 
-      // Attempt to create / resume the AudioContext if it's missing.
-      // This can happen when the stream was initialised before a user
-      // gesture unlocked audio.  By the time addChunk is called the
-      // page has likely received a gesture so _setup() should succeed.
+      // Attempt to create the AudioContext directly if it's missing.
+      // Howler._setup() does NOT create the context — the private
+      // setupAudioContext() does, but it's not exposed. Create it ourselves.
       if (!Howler.ctx) {
-        Howler._setup();
+        try {
+          if (typeof AudioContext !== 'undefined') {
+            Howler.ctx = new AudioContext();
+          } else if (typeof webkitAudioContext !== 'undefined') {
+            Howler.ctx = new webkitAudioContext();
+          }
+          if (Howler.ctx) {
+            Howler.masterGain = (typeof Howler.ctx.createGain === 'undefined')
+              ? Howler.ctx.createGainNode()
+              : Howler.ctx.createGain();
+            Howler.masterGain.gain.setValueAtTime(Howler._muted ? 0 : (Howler._volume || 1), Howler.ctx.currentTime);
+            Howler.masterGain.connect(Howler.ctx.destination);
+            Howler.usingWebAudio = true;
+          }
+        } catch (e) { /* Web Audio not supported */ }
       }
       if (Howler.ctx && Howler.ctx.state === 'suspended') {
         Howler.ctx.resume();
