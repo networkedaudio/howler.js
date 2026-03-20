@@ -90,10 +90,22 @@ public static partial class SdpParser
             };
         }
 
-        // If no channel labels from fmtp channel-order, try media-level i= line
+        // If no channel labels from fmtp channel-order, try a=label: entries,
+        // then fall back to media-level i= line
+        if (session.ChannelLabels.Count == 0 && session.MediaLabels.Count > 0)
+        {
+            session.ChannelLabels = session.MediaLabels;
+        }
+
         if (session.ChannelLabels.Count == 0 && !string.IsNullOrWhiteSpace(session.MediaDescription))
         {
             session.ChannelLabels = ParseMediaDescriptionLabels(session.MediaDescription, session.Channels);
+        }
+
+        // Final fallback: try session-level i= line for channel labels
+        if (session.ChannelLabels.Count == 0 && !string.IsNullOrWhiteSpace(session.SessionDescription))
+        {
+            session.ChannelLabels = ParseMediaDescriptionLabels(session.SessionDescription, session.Channels);
         }
 
         return session;
@@ -157,6 +169,10 @@ public static partial class SdpParser
         else if (value.StartsWith("fmtp:"))
         {
             ParseFmtp(value[5..], session);
+        }
+        else if (value.StartsWith("label:"))
+        {
+            ParseLabel(value[6..], session);
         }
         else if (value == "recvonly")
         {
@@ -304,25 +320,84 @@ public static partial class SdpParser
     }
 
     /// <summary>
-    /// If no channel-order was found in fmtp, attempt to extract labels from
-    /// the media-level i= line (some devices put "Ch1,Ch2,Ch3..." there).
-    /// Call after parsing is complete.
+    /// If no channel-order or a=label: was found, attempt to extract labels from
+    /// the i= line (some devices put "Ch1,Ch2,Ch3..." or "Mic 1; Mic 2" there).
+    /// Also tries slash and pipe separators.
+    /// Handles common prefix patterns like "8 channels: 01, 02, ..." by stripping
+    /// the prefix before splitting.
     /// </summary>
-    public static List<string> ParseMediaDescriptionLabels(string mediaDescription, int channelCount)
+    public static List<string> ParseMediaDescriptionLabels(string description, int channelCount)
     {
-        if (string.IsNullOrWhiteSpace(mediaDescription))
+        if (string.IsNullOrWhiteSpace(description) || channelCount <= 0)
             return [];
 
-        // Try comma-separated, then semicolon-separated
-        var separators = new[] { ',', ';' };
-        foreach (var sep in separators)
+        // Strip common "N channels:" prefix first, then try the raw string as fallback
+        var stripped = StripChannelPrefix(description);
+        var candidates = stripped != description
+            ? new[] { stripped, description }
+            : new[] { description };
+
+        char[] separators = [',', ';', '|', '/'];
+
+        foreach (var candidate in candidates)
         {
-            var parts = mediaDescription.Split(sep, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            if (parts.Length == channelCount)
-                return [.. parts];
+            foreach (var sep in separators)
+            {
+                var parts = candidate.Split(sep, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                if (parts.Length == channelCount)
+                    return [.. parts];
+            }
         }
 
         return [];
+    }
+
+    /// <summary>
+    /// Strip common channel-count prefixes from i= lines.
+    /// Patterns: "N channels: ...", "N ch: ...", "channels: ..."
+    /// </summary>
+    private static string StripChannelPrefix(string value)
+    {
+        var match = ChannelPrefixRegex().Match(value);
+        if (match.Success)
+            return value[match.Length..].Trim();
+        return value;
+    }
+
+    [GeneratedRegex(@"^(\d+\s+)?(channels?|ch)\s*:\s*", RegexOptions.IgnoreCase)]
+    private static partial Regex ChannelPrefixRegex();
+
+    /// <summary>
+    /// Parse a=label: attributes (RFC 4574).
+    /// Dante devices commonly emit one a=label: per channel:
+    ///   a=label:1 Mic 1
+    ///   a=label:2 Mic 2
+    /// Some emit a single comma-separated line:
+    ///   a=label:Mic 1,Mic 2,Mic 3
+    /// </summary>
+    private static void ParseLabel(string value, SdpSession session)
+    {
+        var trimmed = value.Trim();
+        if (string.IsNullOrEmpty(trimmed))
+            return;
+
+        // If it contains commas, treat as a comma-separated list
+        if (trimmed.Contains(','))
+        {
+            var parts = trimmed.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            foreach (var p in parts)
+                session.MediaLabels.Add(p);
+        }
+        else
+        {
+            // Single label — may have a leading channel number: "1 Mic 1"
+            // Strip optional leading digits + space
+            var spaceIdx = trimmed.IndexOf(' ');
+            if (spaceIdx > 0 && int.TryParse(trimmed[..spaceIdx], out _))
+                session.MediaLabels.Add(trimmed[(spaceIdx + 1)..].Trim());
+            else
+                session.MediaLabels.Add(trimmed);
+        }
     }
 
     [GeneratedRegex(@"channel-order=SMPTE2110\.\(([^)]+)\)", RegexOptions.IgnoreCase)]
@@ -355,10 +430,15 @@ public sealed class SdpSession
     /// <summary>
     /// Per-channel labels extracted from SDP, in channel order.
     /// Sources: SMPTE ST 2110-30 channel-order in a=fmtp,
-    /// or media-level i= lines from some implementations.
+    /// a=label: (RFC 4574), or media-level i= lines from some implementations.
     /// Empty list if no labels were found.
     /// </summary>
     public List<string> ChannelLabels { get; set; } = [];
+
+    /// <summary>
+    /// Raw a=label: values collected during media section parsing.
+    /// </summary>
+    internal List<string> MediaLabels { get; set; } = [];
 
     /// <summary>
     /// Media-level description (i= line under m= section).
