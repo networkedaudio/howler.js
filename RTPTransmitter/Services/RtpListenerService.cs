@@ -20,34 +20,42 @@ public sealed class RtpListenerService : BackgroundService
     private readonly ILogger<RtpListenerService> _logger;
     private readonly IHubContext<AudioStreamHub> _hubContext;
     private readonly RtpListenerOptions _options;
+    private readonly NetworkInterfaceService _nicService;
 
     public RtpListenerService(
         ILogger<RtpListenerService> logger,
         IHubContext<AudioStreamHub> hubContext,
-        IOptions<RtpListenerOptions> options)
+        IOptions<RtpListenerOptions> options,
+        NetworkInterfaceService nicService)
     {
         _logger = logger;
         _hubContext = hubContext;
         _options = options.Value;
+        _nicService = nicService;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Prefer runtime NIC selection, then fall back to config
+        var localAddress = _nicService.SelectedAddress;
+        if (string.IsNullOrWhiteSpace(localAddress) || localAddress == "0.0.0.0")
+            localAddress = _options.LocalAddress;
+
         _logger.LogInformation(
             "RTP Listener starting on port {Port}, multicast={Multicast}, sampleRate={SampleRate}, channels={Channels}",
             _options.Port, _options.MulticastGroup, _options.SampleRate, _options.Channels);
 
         using var udpClient = new UdpClient();
         udpClient.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-        udpClient.Client.Bind(new IPEndPoint(IPAddress.Parse(_options.LocalAddress), _options.Port));
+        udpClient.Client.Bind(new IPEndPoint(IPAddress.Parse(localAddress), _options.Port));
 
         // Join multicast group if configured
         if (!string.IsNullOrWhiteSpace(_options.MulticastGroup))
         {
             var multicastAddress = IPAddress.Parse(_options.MulticastGroup);
-            if (!string.IsNullOrWhiteSpace(_options.LocalAddress) && _options.LocalAddress != "0.0.0.0")
+            if (!string.IsNullOrWhiteSpace(localAddress) && localAddress != "0.0.0.0")
             {
-                udpClient.JoinMulticastGroup(multicastAddress, IPAddress.Parse(_options.LocalAddress));
+                udpClient.JoinMulticastGroup(multicastAddress, IPAddress.Parse(localAddress));
             }
             else
             {

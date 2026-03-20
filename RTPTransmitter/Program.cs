@@ -30,6 +30,9 @@ builder.Services.Configure<SapListenerOptions>(
 builder.Services.AddSingleton<SapStreamRegistry>();
 builder.Services.AddHostedService<SapDiscoveryService>();
 
+// Network interface service (runtime NIC selection for multicast binding)
+builder.Services.AddSingleton<NetworkInterfaceService>();
+
 // Dynamic RTP stream manager (starts/stops listeners for SAP-discovered streams)
 builder.Services.AddSingleton<RtpStreamManager>();
 

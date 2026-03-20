@@ -20,16 +20,19 @@ public sealed class RtpStreamManager : IDisposable
     private readonly ILogger<RtpStreamManager> _logger;
     private readonly IHubContext<AudioStreamHub> _hubContext;
     private readonly RtpListenerOptions _options;
+    private readonly NetworkInterfaceService _nicService;
     private readonly ConcurrentDictionary<string, ActiveStream> _activeStreams = new();
 
     public RtpStreamManager(
         ILogger<RtpStreamManager> logger,
         IHubContext<AudioStreamHub> hubContext,
-        IOptions<RtpListenerOptions> options)
+        IOptions<RtpListenerOptions> options,
+        NetworkInterfaceService nicService)
     {
         _logger = logger;
         _hubContext = hubContext;
         _options = options.Value;
+        _nicService = nicService;
     }
 
     /// <summary>
@@ -128,7 +131,12 @@ public sealed class RtpStreamManager : IDisposable
     {
         try
         {
-            var localAddress = IPAddress.Parse(_options.LocalAddress);
+            // Prefer runtime NIC selection, then fall back to config
+            var localAddressStr = _nicService.SelectedAddress;
+            if (string.IsNullOrWhiteSpace(localAddressStr) || localAddressStr == "0.0.0.0")
+                localAddressStr = _options.LocalAddress;
+
+            var localAddress = IPAddress.Parse(localAddressStr);
 
             using var udpClient = new UdpClient();
             udpClient.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
@@ -136,7 +144,7 @@ public sealed class RtpStreamManager : IDisposable
 
             _logger.LogInformation(
                 "RTP [{StreamId}] UDP socket bound to {LocalAddress}:{Port}",
-                stream.StreamId, _options.LocalAddress, stream.Port);
+                stream.StreamId, localAddressStr, stream.Port);
 
             if (!string.IsNullOrWhiteSpace(stream.MulticastGroup))
             {
@@ -146,7 +154,7 @@ public sealed class RtpStreamManager : IDisposable
                     udpClient.JoinMulticastGroup(multicastAddress, localAddress);
                     _logger.LogInformation(
                         "RTP [{StreamId}] Joined multicast {Group}:{Port} on interface {LocalAddress}",
-                        stream.StreamId, stream.MulticastGroup, stream.Port, _options.LocalAddress);
+                        stream.StreamId, stream.MulticastGroup, stream.Port, localAddressStr);
                 }
                 else
                 {

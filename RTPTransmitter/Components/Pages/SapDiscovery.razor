@@ -3,12 +3,45 @@
 @using RTPTransmitter.Services
 @inject SapStreamRegistry Registry
 @inject RtpStreamManager StreamManager
+@inject NetworkInterfaceService NicService
 @inject IJSRuntime JS
 @implements IDisposable
 
 <PageTitle>SAP Stream Discovery</PageTitle>
 
 <h2>SAP Stream Discovery</h2>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <h5 class="card-title mb-3">Network Interface</h5>
+        <div class="d-flex align-items-center gap-3">
+            <MudSelect T="string" Label="Select NIC for multicast" Variant="Variant.Outlined"
+                       Value="selectedNic" ValueChanged="OnNicSelected"
+                       AnchorOrigin="Origin.BottomCenter" Dense="true" Style="max-width: 600px;">
+                @foreach (var nic in availableNics)
+                {
+                    <MudSelectItem T="string" Value="@nic.IpAddress">
+                        @nic.DisplayName
+                        @if (!nic.SupportsMulticast)
+                        {
+                            <text> (no multicast)</text>
+                        }
+                    </MudSelectItem>
+                }
+            </MudSelect>
+            <MudIconButton Icon="@Icons.Material.Filled.Refresh" Size="Size.Medium"
+                           OnClick="RefreshNics" Title="Refresh NIC list" />
+            @if (!string.IsNullOrEmpty(selectedNic) && selectedNic != "0.0.0.0")
+            {
+                <MudChip T="string" Color="Color.Success" Size="Size.Small">@selectedNic</MudChip>
+            }
+            else
+            {
+                <MudChip T="string" Color="Color.Warning" Size="Size.Small">No NIC selected</MudChip>
+            }
+        </div>
+    </div>
+</div>
 
 <div class="card mb-4">
     <div class="card-body">
@@ -172,8 +205,15 @@
     private bool isProcessing;
     private System.Threading.Timer? refreshTimer;
 
+    private IReadOnlyList<NicInfo> availableNics = [];
+    private string selectedNic = "0.0.0.0";
+
     protected override void OnInitialized()
     {
+        // Load available NICs and current selection
+        availableNics = NicService.GetAvailableInterfaces();
+        selectedNic = NicService.SelectedAddress;
+
         RefreshStreams();
 
         // Subscribe to registry changes
@@ -188,6 +228,17 @@
                 StateHasChanged();
             });
         }, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+    }
+
+    private void OnNicSelected(string ipAddress)
+    {
+        selectedNic = ipAddress;
+        NicService.Select(ipAddress);
+    }
+
+    private void RefreshNics()
+    {
+        availableNics = NicService.GetAvailableInterfaces();
     }
 
     private void OnRegistryChanged()
