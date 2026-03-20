@@ -426,18 +426,18 @@
     {
         try
         {
-            var stats = await JS.InvokeAsync<Dictionary<string, object>>("AudioStreamInterop.getStats");
-            if (stats != null)
+            var stats = await JS.InvokeAsync<System.Text.Json.JsonElement>("AudioStreamInterop.getStats");
+            if (stats.ValueKind == System.Text.Json.JsonValueKind.Object)
             {
-                if (stats.TryGetValue("chunksReceived", out var cr))
-                    chunksReceived = Convert.ToInt32(cr);
-                if (stats.TryGetValue("chunksPlayed", out var cp))
-                    chunksPlayed = Convert.ToInt32(cp);
-                if (stats.TryGetValue("errors", out var er))
-                    errors = Convert.ToInt32(er);
-                if (stats.TryGetValue("sourceChannels", out var sc))
+                if (stats.TryGetProperty("chunksReceived", out var cr))
+                    chunksReceived = cr.GetInt32();
+                if (stats.TryGetProperty("chunksPlayed", out var cp))
+                    chunksPlayed = cp.GetInt32();
+                if (stats.TryGetProperty("errors", out var er))
+                    errors = er.GetInt32();
+                if (stats.TryGetProperty("sourceChannels", out var sc))
                 {
-                    int reported = Convert.ToInt32(sc);
+                    int reported = sc.GetInt32();
                     if (reported != sourceChannels && reported > 0)
                     {
                         sourceChannels = reported;
