@@ -95,4 +95,10 @@ public sealed class DiscoveredStream
     /// rather than discovered via SAP.
     /// </summary>
     public bool IsManual { get; set; }
+
+    /// <summary>
+    /// Per-channel labels from SDP (SMPTE ST 2110-30 channel-order or media i= line).
+    /// Empty list if the SDP does not include channel labelling.
+    /// </summary>
+    public List<string> ChannelLabels { get; set; } = [];
 }

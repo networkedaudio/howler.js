@@ -102,10 +102,11 @@
 
         @if (sourceChannels > 0)
         {
-            <MudSimpleTable Style="max-width: 700px;" Dense="true" Hover="true" Bordered="true">
+            <MudSimpleTable Style="max-width: 800px;" Dense="true" Hover="true" Bordered="true">
                 <thead>
                     <tr>
                         <th>Source Ch</th>
+                        <th>Label</th>
                         <th>Assign</th>
                         <th style="width:80px;">Solo</th>
                         <th style="width:60px; text-align:center;">Level</th>
@@ -116,8 +117,19 @@
                     {
                         int ch = i;
                         string assignment = GetChannelAssignment(ch);
+                        string label = GetChannelLabel(ch);
                         <tr class="@(assignment != "Off" ? "mud-theme-primary" : "")" style="@(assignment != "Off" ? "background-color: var(--mud-palette-primary-lighten, rgba(var(--mud-palette-primary-rgb),0.08));" : "")">
                             <td><strong>@(ch + 1)</strong> <span class="text-muted small">(index @ch)</span></td>
+                            <td>
+                                @if (!string.IsNullOrEmpty(label))
+                                {
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary">@label</MudChip>
+                                }
+                                else
+                                {
+                                    <span class="text-muted small">—</span>
+                                }
+                            </td>
                             <td>
                                 <MudSelect T="string" Value="@assignment" ValueChanged="v => OnChannelAssignmentChanged(ch, v)"
                                            Variant="Variant.Outlined" Dense="true" Margin="Margin.Dense"
@@ -241,6 +253,7 @@
     private string? activeStreamName;
     private string displayMulticast = "";
     private int displayPort;
+    private List<string> channelLabels = [];
 
     protected override void OnInitialized()
     {
@@ -258,6 +271,7 @@
                 sourceChannels = discovered.Channels;
                 displayMulticast = discovered.MulticastGroup;
                 displayPort = discovered.Port;
+                channelLabels = discovered.ChannelLabels;
 
                 // Ensure the RTP listener is running for this stream
                 if (!StreamManager.IsActive(streamId))
@@ -341,6 +355,9 @@
     }
 
     private bool IsSoloed(int ch) => soloChannel.HasValue && soloChannel.Value == ch;
+
+    private string GetChannelLabel(int ch) =>
+        ch >= 0 && ch < channelLabels.Count ? channelLabels[ch] : string.Empty;
 
     private double GetChannelLevel(int ch) =>
         ch >= 0 && ch < channelLevels.Length ? channelLevels[ch] : 0;

@@ -29,7 +29,8 @@ public sealed class SapListenerOptions
 
     /// <summary>
     /// Timeout in seconds after which a stream not re-announced is purged.
-    /// SAP announcements are typically repeated every 300s. Default: 900 (15 min).
+    /// Configurable via appsettings.json "SapListener:ExpirySeconds".
+    /// Default: 300 (5 minutes).
     /// </summary>
-    public int ExpirySeconds { get; set; } = 900;
+    public int ExpirySeconds { get; set; } = 300;
 }

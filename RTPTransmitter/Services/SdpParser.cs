@@ -46,6 +46,8 @@ public static partial class SdpParser
                 case 'i':
                     if (currentMediaType == null)
                         session.SessionDescription = value;
+                    else
+                        session.MediaDescription = value;
                     break;
 
                 case 'c':
@@ -86,6 +88,12 @@ public static partial class SdpParser
                 11 => 1,  // L16/44100/1
                 _ => session.Channels
             };
+        }
+
+        // If no channel labels from fmtp channel-order, try media-level i= line
+        if (session.ChannelLabels.Count == 0 && !string.IsNullOrWhiteSpace(session.MediaDescription))
+        {
+            session.ChannelLabels = ParseMediaDescriptionLabels(session.MediaDescription, session.Channels);
         }
 
         return session;
@@ -146,6 +154,10 @@ public static partial class SdpParser
             if (parts.Length >= 5)
                 session.SourceAddress = parts[4];
         }
+        else if (value.StartsWith("fmtp:"))
+        {
+            ParseFmtp(value[5..], session);
+        }
         else if (value == "recvonly")
         {
             session.Direction = "recvonly";
@@ -189,6 +201,132 @@ public static partial class SdpParser
             _ => session.BitDepth
         };
     }
+
+    /// <summary>
+    /// Parse a=fmtp lines. The main item of interest is channel-order
+    /// per SMPTE ST 2110-30, e.g.:
+    ///   a=fmtp:96 channel-order=SMPTE2110.(ST,M,M,M,M,M,M,M)
+    ///   a=fmtp:96 channel-order=SMPTE2110.(51,LFE)
+    /// The grouping symbols inside the parentheses are defined by
+    /// SMPTE ST 2110-30 Table 1 (ST, M, DM, etc.).
+    /// </summary>
+    private static void ParseFmtp(string value, SdpSession session)
+    {
+        // value example: "96 channel-order=SMPTE2110.(ST,M,M,M,M,M,M,M)"
+        var match = ChannelOrderRegex().Match(value);
+        if (match.Success)
+        {
+            var inner = match.Groups[1].Value; // e.g. "ST,M,M,M,M,M,M,M"
+            var labels = ExpandChannelOrder(inner);
+            if (labels.Count > 0)
+                session.ChannelLabels = labels;
+        }
+    }
+
+    /// <summary>
+    /// Expand SMPTE ST 2110-30 channel grouping symbols into per-channel labels.
+    /// </summary>
+    private static List<string> ExpandChannelOrder(string inner)
+    {
+        var labels = new List<string>();
+        // Split by comma, but groups can also be separated by spaces
+        var tokens = inner.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        foreach (var token in tokens)
+        {
+            var t = token.Trim();
+            switch (t.ToUpperInvariant())
+            {
+                // Mono
+                case "M":
+                    labels.Add("M");
+                    break;
+
+                // Dual Mono
+                case "DM":
+                    labels.Add("M1");
+                    labels.Add("M2");
+                    break;
+
+                // Standard Stereo
+                case "ST":
+                    labels.Add("L");
+                    labels.Add("R");
+                    break;
+
+                // Left-Total / Right-Total (matrix stereo)
+                case "LT/RT" or "LTRT":
+                    labels.Add("Lt");
+                    labels.Add("Rt");
+                    break;
+
+                // 5.1 Surround (per SMPTE ST 2110-30 / 377-4)
+                case "51":
+                    labels.Add("L");
+                    labels.Add("R");
+                    labels.Add("C");
+                    labels.Add("LFE");
+                    labels.Add("Ls");
+                    labels.Add("Rs");
+                    break;
+
+                // 7.1 Surround
+                case "71":
+                    labels.Add("L");
+                    labels.Add("R");
+                    labels.Add("C");
+                    labels.Add("LFE");
+                    labels.Add("Lss");
+                    labels.Add("Rss");
+                    labels.Add("Lrs");
+                    labels.Add("Rrs");
+                    break;
+
+                // 22.2 (NHK) — simplified
+                case "222":
+                    for (int i = 1; i <= 24; i++)
+                        labels.Add($"22.2-{i}");
+                    break;
+
+                // Standard Definition groups from ST 2110-30 Table 1
+                case "SGRP":
+                    labels.Add("SGRP");
+                    break;
+
+                // Undefined / single-channel symbol — use as-is
+                default:
+                    labels.Add(t);
+                    break;
+            }
+        }
+
+        return labels;
+    }
+
+    /// <summary>
+    /// If no channel-order was found in fmtp, attempt to extract labels from
+    /// the media-level i= line (some devices put "Ch1,Ch2,Ch3..." there).
+    /// Call after parsing is complete.
+    /// </summary>
+    public static List<string> ParseMediaDescriptionLabels(string mediaDescription, int channelCount)
+    {
+        if (string.IsNullOrWhiteSpace(mediaDescription))
+            return [];
+
+        // Try comma-separated, then semicolon-separated
+        var separators = new[] { ',', ';' };
+        foreach (var sep in separators)
+        {
+            var parts = mediaDescription.Split(sep, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (parts.Length == channelCount)
+                return [.. parts];
+        }
+
+        return [];
+    }
+
+    [GeneratedRegex(@"channel-order=SMPTE2110\.\(([^)]+)\)", RegexOptions.IgnoreCase)]
+    private static partial Regex ChannelOrderRegex();
 }
 
 /// <summary>
@@ -213,6 +351,20 @@ public sealed class SdpSession
     public double PtimeMs { get; set; }
     public string Direction { get; set; } = string.Empty;
     public string RawSdp { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Per-channel labels extracted from SDP, in channel order.
+    /// Sources: SMPTE ST 2110-30 channel-order in a=fmtp,
+    /// or media-level i= lines from some implementations.
+    /// Empty list if no labels were found.
+    /// </summary>
+    public List<string> ChannelLabels { get; set; } = [];
+
+    /// <summary>
+    /// Media-level description (i= line under m= section).
+    /// Some devices put comma-separated channel names here.
+    /// </summary>
+    public string MediaDescription { get; set; } = string.Empty;
 
     /// <summary>
     /// Whether this looks like a valid audio stream we can listen to.

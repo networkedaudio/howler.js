@@ -224,6 +224,7 @@ public sealed class SapDiscoveryService : BackgroundService
             OriginatingSource = sapPacket.OriginatingSource.ToString(),
             Origin = sdp.Origin,
             RawSdp = sdp.RawSdp,
+            ChannelLabels = sdp.ChannelLabels,
             LastSeen = DateTimeOffset.UtcNow
         };
 
@@ -243,7 +244,8 @@ public sealed class SapDiscoveryService : BackgroundService
 
     private async Task PurgeExpiredAsync(CancellationToken stoppingToken)
     {
-        var interval = TimeSpan.FromSeconds(Math.Max(60, _options.ExpirySeconds / 3));
+        // Check at most every 60s, or more often for very short expiry windows
+        var interval = TimeSpan.FromSeconds(Math.Clamp(_options.ExpirySeconds / 3.0, 10, 60));
 
         while (!stoppingToken.IsCancellationRequested)
         {
