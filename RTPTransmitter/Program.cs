@@ -36,6 +36,11 @@ builder.Services.AddSingleton<NetworkInterfaceService>();
 // Dynamic RTP stream manager (starts/stops listeners for SAP-discovered streams)
 builder.Services.AddSingleton<RtpStreamManager>();
 
+// Channel recording service (per-channel capture with silence detection)
+builder.Services.Configure<RecordingOptions>(
+    builder.Configuration.GetSection(RecordingOptions.Section));
+builder.Services.AddSingleton<ChannelRecordingService>();
+
 // Ensure static web assets manifest is loaded in all environments (not just Development)
 if (!builder.Environment.IsDevelopment())
 {

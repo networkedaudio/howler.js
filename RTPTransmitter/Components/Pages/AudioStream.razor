@@ -1,6 +1,7 @@
 @page "/audiostream"
 @rendermode InteractiveServer
 @using Microsoft.AspNetCore.WebUtilities
+@using Microsoft.AspNetCore.SignalR.Client
 @using Microsoft.Extensions.Options
 @using RTPTransmitter.Components.Shared
 @using RTPTransmitter.Services
@@ -64,20 +65,37 @@
 
 <div class="card mb-4">
     <div class="card-body">
-        <h5 class="card-title">Channel Selection</h5>
-        <p class="text-muted">Select which source channels to monitor. Assign channels to Left/Right output or solo a single channel as mono.</p>
+        <div class="d-flex align-items-center justify-space-between mb-3">
+            <h5 class="card-title mb-0 me-4">Channel Selection</h5>
+            <MudToggleGroup T="string" @bind-Value="pageMode" Color="Color.Primary" Rounded="true"
+                            CheckMark="true" FixedContent="true" Style="min-width: 220px;">
+                <MudToggleItem Value="@("Listen")" Text="Listen" />
+                <MudToggleItem Value="@("Record")" Text="Record" />
+            </MudToggleGroup>
+        </div>
 
-        <div class="mb-3">
-            <strong>Quick Presets:</strong>
-            <div class="btn-group ms-2 flex-wrap" role="group">
-                @if (sourceChannels >= 1)
-                {
-                    <button class="btn btn-sm btn-outline-primary" @onclick="() => ApplyChannelMap(new[]{0})" disabled="@(!isStreaming)">
-                        Mono Ch1
-                    </button>
-                }
-                @if (sourceChannels >= 2)
-                {
+        @if (pageMode == "Listen")
+        {
+            <p class="text-muted">Select which source channels to monitor. Assign channels to Left/Right output or solo a single channel as mono.</p>
+        }
+        else
+        {
+            <p class="text-muted">Select channels to record. Recorded audio is saved to disk when silence is detected, no packets arrive, or the buffer is full.</p>
+        }
+
+        @if (pageMode == "Listen")
+        {
+            <div class="mb-3">
+                <strong>Quick Presets:</strong>
+                <div class="btn-group ms-2 flex-wrap" role="group">
+                    @if (sourceChannels >= 1)
+                    {
+                        <button class="btn btn-sm btn-outline-primary" @onclick="() => ApplyChannelMap(new[]{0})" disabled="@(!isStreaming)">
+                            Mono Ch1
+                        </button>
+                    }
+                    @if (sourceChannels >= 2)
+                    {
                     <button class="btn btn-sm btn-outline-primary" @onclick="() => ApplyChannelMap(new[]{0, 1})" disabled="@(!isStreaming)">
                         Stereo 1-2
                     </button>
@@ -99,16 +117,25 @@
                 }
             </div>
         </div>
+        }
 
         @if (sourceChannels > 0)
         {
-            <MudSimpleTable Style="max-width: 800px;" Dense="true" Hover="true" Bordered="true">
+            <MudSimpleTable Style="max-width: 900px;" Dense="true" Hover="true" Bordered="true">
                 <thead>
                     <tr>
                         <th>Source Ch</th>
                         <th>Label</th>
-                        <th>Assign</th>
-                        <th style="width:80px;">Solo</th>
+                        @if (pageMode == "Listen")
+                        {
+                            <th>Assign</th>
+                            <th style="width:80px;">Solo</th>
+                        }
+                        else
+                        {
+                            <th style="width:80px; text-align:center;">Record</th>
+                            <th style="width:100px; text-align:center;">Detect Voice</th>
+                        }
                         <th style="width:60px; text-align:center;">Level</th>
                     </tr>
                 </thead>
@@ -116,53 +143,104 @@
                     @for (int i = 0; i < sourceChannels; i++)
                     {
                         int ch = i;
-                        string assignment = GetChannelAssignment(ch);
                         string label = GetChannelLabel(ch);
-                        <tr class="@(assignment != "Off" ? "mud-theme-primary" : "")" style="@(assignment != "Off" ? "background-color: var(--mud-palette-primary-lighten, rgba(var(--mud-palette-primary-rgb),0.08));" : "")">
-                            <td><strong>@(ch + 1)</strong> <span class="text-muted small">(index @ch)</span></td>
-                            <td>
-                                @if (!string.IsNullOrEmpty(label))
-                                {
-                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary">@label</MudChip>
-                                }
-                                else
-                                {
-                                    <span class="text-muted small">—</span>
-                                }
-                            </td>
-                            <td>
-                                <MudSelect T="string" Value="@assignment" ValueChanged="v => OnChannelAssignmentChanged(ch, v)"
-                                           Variant="Variant.Outlined" Dense="true" Margin="Margin.Dense"
-                                           Disabled="@(!isStreaming)" Style="max-width:130px;">
-                                    <MudSelectItem Value="@("Off")">Off</MudSelectItem>
-                                    <MudSelectItem Value="@("Left")">Left</MudSelectItem>
-                                    <MudSelectItem Value="@("Right")">Right</MudSelectItem>
-                                    <MudSelectItem Value="@("Mono")">Mono</MudSelectItem>
-                                </MudSelect>
-                            </td>
-                            <td>
-                                <MudIconButton Icon="@(IsSoloed(ch) ? Icons.Material.Filled.VolumeUp : Icons.Material.Outlined.VolumeUp)"
-                                               Color="@(IsSoloed(ch) ? Color.Warning : Color.Default)"
-                                               Size="MudBlazor.Size.Small"
-                                               OnClick="() => SoloChannel(ch)"
-                                               Disabled="@(!isStreaming)" />
-                            </td>
-                            <td style="text-align:center; vertical-align:middle;">
-                                <ChannelLevelIndicator IsActive="@(isReceiving && isStreaming)"
-                                                       Level="@GetChannelLevel(ch)" />
-                            </td>
-                        </tr>
+                        bool isRecording = recordingChannels.Contains(ch);
+                        bool isVoiceDetect = voiceDetectChannels.Contains(ch);
+
+                        @if (pageMode == "Listen")
+                        {
+                            string assignment = GetChannelAssignment(ch);
+                            <tr class="@(assignment != "Off" ? "mud-theme-primary" : "")" style="@(assignment != "Off" ? "background-color: var(--mud-palette-primary-lighten, rgba(var(--mud-palette-primary-rgb),0.08));" : "")">
+                                <td><strong>@(ch + 1)</strong> <span class="text-muted small">(index @ch)</span></td>
+                                <td>
+                                    @if (!string.IsNullOrEmpty(label))
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary">@label</MudChip>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted small">—</span>
+                                    }
+                                </td>
+                                <td>
+                                    <MudSelect T="string" Value="@assignment" ValueChanged="v => OnChannelAssignmentChanged(ch, v)"
+                                               Variant="Variant.Outlined" Dense="true" Margin="Margin.Dense"
+                                               Disabled="@(!isStreaming)" Style="max-width:130px;">
+                                        <MudSelectItem Value="@("Off")">Off</MudSelectItem>
+                                        <MudSelectItem Value="@("Left")">Left</MudSelectItem>
+                                        <MudSelectItem Value="@("Right")">Right</MudSelectItem>
+                                        <MudSelectItem Value="@("Mono")">Mono</MudSelectItem>
+                                    </MudSelect>
+                                </td>
+                                <td>
+                                    <MudIconButton Icon="@(IsSoloed(ch) ? Icons.Material.Filled.VolumeUp : Icons.Material.Outlined.VolumeUp)"
+                                                   Color="@(IsSoloed(ch) ? Color.Warning : Color.Default)"
+                                                   Size="MudBlazor.Size.Small"
+                                                   OnClick="() => SoloChannel(ch)"
+                                                   Disabled="@(!isStreaming)" />
+                                </td>
+                                <td style="text-align:center; vertical-align:middle;">
+                                    <ChannelLevelIndicator IsActive="@(isReceiving && isStreaming)"
+                                                           Level="@GetChannelLevel(ch)" />
+                                </td>
+                            </tr>
+                        }
+                        else
+                        {
+                            <tr class="@(isRecording ? "mud-theme-primary" : "")" style="@(isRecording ? "background-color: var(--mud-palette-primary-lighten, rgba(var(--mud-palette-primary-rgb),0.08));" : "")">
+                                <td><strong>@(ch + 1)</strong> <span class="text-muted small">(index @ch)</span></td>
+                                <td>
+                                    @if (!string.IsNullOrEmpty(label))
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary">@label</MudChip>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted small">—</span>
+                                    }
+                                </td>
+                                <td style="text-align:center;">
+                                    <MudCheckBox T="bool" Value="@isRecording"
+                                                 ValueChanged="v => OnRecordingChanged(ch, v)"
+                                                 Color="Color.Error"
+                                                 Dense="true" />
+                                </td>
+                                <td style="text-align:center;">
+                                    <MudCheckBox T="bool" Value="@isVoiceDetect"
+                                                 ValueChanged="v => OnVoiceDetectChanged(ch, v)"
+                                                 Color="Color.Secondary"
+                                                 Dense="true"
+                                                 Disabled="@(!isRecording)" />
+                                </td>
+                                <td style="text-align:center; vertical-align:middle;">
+                                    <ChannelLevelIndicator IsActive="@(isReceiving && isStreaming)"
+                                                           Level="@GetChannelLevel(ch)" />
+                                </td>
+                            </tr>
+                        }
                     }
                 </tbody>
             </MudSimpleTable>
 
-            <div class="mt-2">
-                <span class="text-muted">Current output: </span>
-                <code>[@(string.Join(", ", currentChannelMap.Select(c => $"ch{c + 1}")))]</code>
-                <span class="text-muted ms-2">
-                    (@(currentChannelMap.Length switch { 1 => "mono", 2 => "stereo", _ => currentChannelMap.Length + "-channel" }))
-                </span>
-            </div>
+            @if (pageMode == "Listen")
+            {
+                <div class="mt-2">
+                    <span class="text-muted">Current output: </span>
+                    <code>[@(string.Join(", ", currentChannelMap.Select(c => $"ch{c + 1}")))]</code>
+                    <span class="text-muted ms-2">
+                        (@(currentChannelMap.Length switch { 1 => "mono", 2 => "stereo", _ => currentChannelMap.Length + "-channel" }))
+                    </span>
+                </div>
+            }
+            else
+            {
+                <div class="mt-2">
+                    <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Filled"
+                             Icon="@Icons.Material.Filled.FiberManualRecord">
+                        @recordingChannels.Count channel(s) recording
+                    </MudChip>
+                </div>
+            }
         }
     </div>
 </div>
@@ -247,6 +325,14 @@
     private Dictionary<int, string> channelAssignments = new();
     private int[] currentChannelMap = [0];
     private int? soloChannel = null;
+
+    // Listen / Record mode toggle
+    private string pageMode = "Listen";
+
+    // Recording state
+    private HashSet<int> recordingChannels = new();
+    private HashSet<int> voiceDetectChannels = new();
+    private HubConnection? hubConnection;
 
     // SAP stream parameters
     private string activeStreamId = "default";
@@ -500,6 +586,44 @@
         }
     }
 
+    private async Task EnsureHubConnection()
+    {
+        if (hubConnection is not null) return;
+
+        hubConnection = new HubConnectionBuilder()
+            .WithUrl(Navigation.ToAbsoluteUri("/audiohub"))
+            .Build();
+
+        await hubConnection.StartAsync();
+    }
+
+    private async Task OnRecordingChanged(int channel, bool enabled)
+    {
+        await EnsureHubConnection();
+
+        if (enabled)
+            recordingChannels.Add(channel);
+        else
+        {
+            recordingChannels.Remove(channel);
+            voiceDetectChannels.Remove(channel);
+        }
+
+        await hubConnection!.SendAsync("SetChannelRecording", activeStreamId, channel, enabled);
+    }
+
+    private async Task OnVoiceDetectChanged(int channel, bool enabled)
+    {
+        await EnsureHubConnection();
+
+        if (enabled)
+            voiceDetectChannels.Add(channel);
+        else
+            voiceDetectChannels.Remove(channel);
+
+        await hubConnection!.SendAsync("SetChannelVoiceDetect", activeStreamId, channel, enabled);
+    }
+
     public async ValueTask DisposeAsync()
     {
         statsTimer?.Stop();
@@ -509,6 +633,14 @@
             try
             {
                 await JS.InvokeVoidAsync("AudioStreamInterop.disconnect");
+            }
+            catch { }
+        }
+        if (hubConnection is not null)
+        {
+            try
+            {
+                await hubConnection.DisposeAsync();
             }
             catch { }
         }

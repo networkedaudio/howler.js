@@ -21,18 +21,21 @@ public sealed class RtpStreamManager : IDisposable
     private readonly IHubContext<AudioStreamHub> _hubContext;
     private readonly RtpListenerOptions _options;
     private readonly NetworkInterfaceService _nicService;
+    private readonly ChannelRecordingService _recordingService;
     private readonly ConcurrentDictionary<string, ActiveStream> _activeStreams = new();
 
     public RtpStreamManager(
         ILogger<RtpStreamManager> logger,
         IHubContext<AudioStreamHub> hubContext,
         IOptions<RtpListenerOptions> options,
-        NetworkInterfaceService nicService)
+        NetworkInterfaceService nicService,
+        ChannelRecordingService recordingService)
     {
         _logger = logger;
         _hubContext = hubContext;
         _options = options.Value;
         _nicService = nicService;
+        _recordingService = recordingService;
     }
 
     /// <summary>
@@ -243,6 +246,9 @@ public sealed class RtpStreamManager : IDisposable
 
                 // Convert payload to float32 samples
                 float[] samples = PcmConverter.ConvertPayload(packet.Payload, packet.PayloadType, stream.BitDepth);
+
+                // Feed samples to the recording service (per-channel capture)
+                _recordingService.FeedSamples(stream.StreamId, samples, stream.Channels, stream.BitDepth);
 
                 sampleBuffer.AddRange(samples);
                 packetsInChunk++;

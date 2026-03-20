@@ -18,15 +18,18 @@ public sealed class AudioStreamHub : Hub
     private readonly ILogger<AudioStreamHub> _logger;
     private readonly RtpListenerOptions _options;
     private readonly RtpStreamManager _streamManager;
+    private readonly ChannelRecordingService _recordingService;
 
     public AudioStreamHub(
         ILogger<AudioStreamHub> logger,
         IOptions<RtpListenerOptions> options,
-        RtpStreamManager streamManager)
+        RtpStreamManager streamManager,
+        ChannelRecordingService recordingService)
     {
         _logger = logger;
         _options = options.Value;
         _streamManager = streamManager;
+        _recordingService = recordingService;
     }
 
     public override Task OnConnectedAsync()
@@ -81,6 +84,40 @@ public sealed class AudioStreamHub : Hub
             SourceChannels = channels,
             StreamId = streamId
         };
+    }
+
+    /// <summary>
+    /// Called by the browser to enable/disable recording for a channel.
+    /// </summary>
+    public void SetChannelRecording(string streamId, int channel, bool enabled)
+    {
+        // Resolve stream parameters (sample rate, bit depth)
+        int sampleRate = _options.SampleRate;
+        int bitDepth = 24;
+
+        var activeStreams = _streamManager.GetActiveStreams();
+        var active = activeStreams.FirstOrDefault(s => s.StreamId == streamId);
+        if (active != null)
+        {
+            sampleRate = active.SampleRate;
+            bitDepth = active.BitDepth;
+        }
+
+        _recordingService.SetChannelRecording(streamId, channel, enabled, sampleRate, bitDepth);
+        _logger.LogInformation(
+            "Client {ConnectionId} set recording {State} for stream {StreamId} channel {Channel}",
+            Context.ConnectionId, enabled ? "ON" : "OFF", streamId, channel);
+    }
+
+    /// <summary>
+    /// Called by the browser to enable/disable voice detection for a channel.
+    /// </summary>
+    public void SetChannelVoiceDetect(string streamId, int channel, bool enabled)
+    {
+        _recordingService.SetChannelVoiceDetect(streamId, channel, enabled);
+        _logger.LogInformation(
+            "Client {ConnectionId} set voice detect {State} for stream {StreamId} channel {Channel}",
+            Context.ConnectionId, enabled ? "ON" : "OFF", streamId, channel);
     }
 
     /// <summary>
