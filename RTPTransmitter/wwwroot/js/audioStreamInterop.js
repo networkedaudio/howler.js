@@ -17,6 +17,9 @@ window.AudioStreamInterop = (function () {
     var _isConnected = false;
     var _sourceChannels = 1;
     var _channelMap = [0];
+    var _debug = false;
+    var _debugChunkInterval = 100;
+    var _statsLogTimer = null;
     var _stats = {
         chunksReceived: 0,
         chunksPlayed: 0,
@@ -49,14 +52,14 @@ window.AudioStreamInterop = (function () {
             volume: 1.0
         });
 
+        _debug = !!debug;
         _stats = { chunksReceived: 0, chunksPlayed: 0, errors: 0 };
 
-        if (debug) {
-            console.log('[AudioStreamInterop] Initialized: sampleRate=' + sampleRate +
-                ', sourceChannels=' + _sourceChannels +
-                ', channelMap=[' + _channelMap.join(',') + ']' +
-                ', bufferSize=' + bufferSize);
-        }
+        console.log('[AudioStreamInterop] Initialized: sampleRate=' + sampleRate +
+            ', sourceChannels=' + _sourceChannels +
+            ', channelMap=[' + _channelMap.join(',') + ']' +
+            ', bufferSize=' + bufferSize +
+            ', debug=' + _debug);
     }
 
     /**
@@ -69,23 +72,47 @@ window.AudioStreamInterop = (function () {
      */
     function connect(hubUrl, streamId) {
         if (_connection) {
+            console.log('[AudioStreamInterop] Disconnecting previous connection before reconnect');
             disconnect();
         }
 
-        _connection = new signalR.HubConnectionBuilder()
+        console.log('[AudioStreamInterop] Building SignalR connection to ' + hubUrl + ' for stream "' + (streamId || 'default') + '"');
+
+        var builder = new signalR.HubConnectionBuilder()
             .withUrl(hubUrl)
-            .withAutomaticReconnect([0, 1000, 2000, 5000, 10000])
-            .build();
+            .withAutomaticReconnect([0, 1000, 2000, 5000, 10000]);
+
+        if (_debug) {
+            builder.configureLogging(signalR.LogLevel.Information);
+        }
+
+        _connection = builder.build();
+
+        console.log('[AudioStreamInterop] Registering ReceiveAudioChunk handler');
 
         // Server sends: ReceiveAudioChunk(base64Data, sourceChannelCount)
         _connection.on('ReceiveAudioChunk', function (base64Data, sourceChannelCount) {
             _stats.chunksReceived++;
 
+            // Log the very first chunk in detail, then every Nth chunk
+            if (_stats.chunksReceived === 1) {
+                console.log('[AudioStreamInterop] *** First chunk received ***' +
+                    ' | base64 length=' + (base64Data ? base64Data.length : 'null') +
+                    ' | sourceChannelCount=' + sourceChannelCount +
+                    ' | _sourceChannels=' + _sourceChannels +
+                    ' | _stream=' + (!!_stream));
+            } else if (_debug && (_stats.chunksReceived % _debugChunkInterval === 0)) {
+                console.log('[AudioStreamInterop] Chunk #' + _stats.chunksReceived +
+                    ' | base64 len=' + (base64Data ? base64Data.length : 'null') +
+                    ' | played=' + _stats.chunksPlayed +
+                    ' | errors=' + _stats.errors);
+            }
+
             // Update source channel count if the server reports a different value
             if (sourceChannelCount && sourceChannelCount !== _sourceChannels && _stream) {
+                console.log('[AudioStreamInterop] Source channels changed: ' + _sourceChannels + ' -> ' + sourceChannelCount);
                 _sourceChannels = sourceChannelCount;
                 _stream.sourceChannels(sourceChannelCount);
-                console.log('[AudioStreamInterop] Source channels updated to ' + sourceChannelCount);
             }
 
             try {
@@ -93,39 +120,78 @@ window.AudioStreamInterop = (function () {
                 _stats.chunksPlayed++;
             } catch (e) {
                 _stats.errors++;
-                console.error('[AudioStreamInterop] Error processing chunk:', e);
+                console.error('[AudioStreamInterop] Error processing chunk #' + _stats.chunksReceived + ':', e);
+                if (_stats.errors <= 5) {
+                    console.error('[AudioStreamInterop] Chunk data debug:' +
+                        ' base64 length=' + (base64Data ? base64Data.length : 'null') +
+                        ' sourceChannelCount=' + sourceChannelCount +
+                        ' streamInitialized=' + (!!_stream));
+                }
             }
         });
 
-        _connection.onreconnected(function () {
-            console.log('[AudioStreamInterop] Reconnected to hub');
-            _connection.invoke('JoinAudioStream', streamId || 'default');
-        });
-
-        _connection.onclose(function () {
-            console.log('[AudioStreamInterop] Connection closed');
+        _connection.onreconnecting(function (err) {
+            console.warn('[AudioStreamInterop] Connection reconnecting...', err || '');
             _isConnected = false;
         });
 
+        _connection.onreconnected(function (connectionId) {
+            console.log('[AudioStreamInterop] Reconnected (id=' + connectionId + '), rejoining stream');
+            _isConnected = true;
+            _connection.invoke('JoinAudioStream', streamId || 'default');
+        });
+
+        _connection.onclose(function (err) {
+            console.log('[AudioStreamInterop] Connection closed', err || '');
+            _isConnected = false;
+            stopStatsLogger();
+        });
+
+        console.log('[AudioStreamInterop] Starting connection...');
+
         _connection.start().then(function () {
             _isConnected = true;
-            console.log('[AudioStreamInterop] Connected to hub');
+            console.log('[AudioStreamInterop] Connected to hub (state=' + _connection.state + ')');
+            console.log('[AudioStreamInterop] Invoking JoinAudioStream("' + (streamId || 'default') + '")...');
             return _connection.invoke('JoinAudioStream', streamId || 'default');
         }).then(function (streamInfo) {
+            console.log('[AudioStreamInterop] JoinAudioStream response:', JSON.stringify(streamInfo));
             if (streamInfo) {
                 _sourceChannels = streamInfo.sourceChannels || _sourceChannels;
                 if (_stream) {
                     _stream.sourceChannels(_sourceChannels);
                 }
-                console.log('[AudioStreamInterop] Stream info: ' +
+                console.log('[AudioStreamInterop] Stream joined: ' +
                     _sourceChannels + ' channels @ ' +
-                    (streamInfo.sampleRate || '?') + 'Hz');
+                    (streamInfo.sampleRate || '?') + 'Hz' +
+                    ', streamId="' + (streamInfo.streamId || streamId || 'default') + '"');
+            } else {
+                console.warn('[AudioStreamInterop] JoinAudioStream returned null/undefined');
             }
-            console.log('[AudioStreamInterop] Joined stream: ' + (streamId || 'default'));
+            console.log('[AudioStreamInterop] Waiting for ReceiveAudioChunk messages...');
+            startStatsLogger();
         }).catch(function (err) {
-            console.error('[AudioStreamInterop] Connection error:', err);
+            console.error('[AudioStreamInterop] Connection/join error:', err);
             _isConnected = false;
         });
+    }
+
+    function startStatsLogger() {
+        stopStatsLogger();
+        _statsLogTimer = setInterval(function () {
+            console.log('[AudioStreamInterop] Stats: received=' + _stats.chunksReceived +
+                ' played=' + _stats.chunksPlayed +
+                ' errors=' + _stats.errors +
+                ' connected=' + _isConnected +
+                ' streamOk=' + (!!_stream));
+        }, 5000);
+    }
+
+    function stopStatsLogger() {
+        if (_statsLogTimer) {
+            clearInterval(_statsLogTimer);
+            _statsLogTimer = null;
+        }
     }
 
     /**
@@ -134,7 +200,12 @@ window.AudioStreamInterop = (function () {
      */
     function processChunk(base64Data) {
         if (!_stream) {
-            console.warn('[AudioStreamInterop] Stream not initialized');
+            console.warn('[AudioStreamInterop] processChunk called but stream not initialized — dropping chunk');
+            return;
+        }
+
+        if (!base64Data || base64Data.length === 0) {
+            console.warn('[AudioStreamInterop] processChunk received empty data');
             return;
         }
 
@@ -147,6 +218,23 @@ window.AudioStreamInterop = (function () {
 
         // Create Float32Array from the raw bytes (interleaved, all channels)
         var float32 = new Float32Array(bytes.buffer);
+
+        // Log data integrity on first chunk and periodically
+        if (_stats.chunksReceived === 1 || (_debug && _stats.chunksReceived % _debugChunkInterval === 0)) {
+            var samplesPerChannel = _sourceChannels > 0 ? (float32.length / _sourceChannels) : float32.length;
+            var minVal = float32.length > 0 ? float32[0] : 0;
+            var maxVal = minVal;
+            for (var j = 0; j < float32.length; j++) {
+                if (float32[j] < minVal) minVal = float32[j];
+                if (float32[j] > maxVal) maxVal = float32[j];
+            }
+            console.log('[AudioStreamInterop] Chunk #' + _stats.chunksReceived + ' decoded:' +
+                ' bytes=' + bytes.length +
+                ' float32Samples=' + float32.length +
+                ' samplesPerCh=' + samplesPerChannel +
+                ' channels=' + _sourceChannels +
+                ' range=[' + minVal.toFixed(4) + ', ' + maxVal.toFixed(4) + ']');
+        }
 
         // Feed into HowlerStream (de-interleaving happens inside based on channelMap)
         _stream.addChunk(float32);
@@ -220,6 +308,9 @@ window.AudioStreamInterop = (function () {
      * Disconnect from SignalR and destroy the stream.
      */
     function disconnect() {
+        console.log('[AudioStreamInterop] Disconnecting... (received=' + _stats.chunksReceived +
+            ' played=' + _stats.chunksPlayed + ' errors=' + _stats.errors + ')');
+        stopStatsLogger();
         if (_connection) {
             _connection.stop();
             _connection = null;
