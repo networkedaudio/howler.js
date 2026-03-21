@@ -9,11 +9,6 @@ public sealed class RecordingOptions
     public const string Section = "Recording";
 
     /// <summary>
-    /// Directory where raw audio files are saved. Default: "Recordings" (relative to app root).
-    /// </summary>
-    public string OutputDirectory { get; set; } = "Recordings";
-
-    /// <summary>
     /// Number of consecutive silent (all-zero) packets on a channel before the
     /// current buffer is flushed to disk. Default: 100.
     /// </summary>

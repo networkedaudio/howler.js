@@ -1,0 +1,259 @@
+@page "/status"
+@rendermode InteractiveServer
+@using RTPTransmitter.Services
+@inject SystemMonitorService Monitor
+@inject LogBuffer LogBuffer
+@inject RtpStreamManager StreamManager
+@inject ChannelRecordingService RecordingService
+@implements IDisposable
+
+<PageTitle>System Status</PageTitle>
+
+<h2>System Status</h2>
+
+@* ── Process Metrics ── *@
+<MudGrid Class="mb-4">
+    <MudItem xs="12" sm="6" md="3">
+        <MudPaper Elevation="2" Class="pa-4 d-flex flex-column align-center">
+            <MudText Typo="Typo.caption" Class="mb-1">CPU Usage</MudText>
+            <MudProgressCircular Color="@CpuColor(snapshot.CpuPercent)" Size="Size.Large"
+                                 Value="@snapshot.CpuPercent" Min="0" Max="100">
+                <CenterContent>
+                    <MudText Typo="Typo.h6">@($"{snapshot.CpuPercent:F1}%")</MudText>
+                </CenterContent>
+            </MudProgressCircular>
+        </MudPaper>
+    </MudItem>
+
+    <MudItem xs="12" sm="6" md="3">
+        <MudPaper Elevation="2" Class="pa-4">
+            <MudText Typo="Typo.caption">Memory (Working Set)</MudText>
+            <MudText Typo="Typo.h5">@SystemSnapshot.FormatBytes(snapshot.WorkingSetBytes)</MudText>
+            <MudText Typo="Typo.body2" Class="mud-text-secondary">
+                Private: @SystemSnapshot.FormatBytes(snapshot.PrivateMemoryBytes)
+            </MudText>
+        </MudPaper>
+    </MudItem>
+
+    <MudItem xs="12" sm="6" md="3">
+        <MudPaper Elevation="2" Class="pa-4">
+            <MudText Typo="Typo.caption">GC Heap</MudText>
+            <MudText Typo="Typo.h5">@SystemSnapshot.FormatBytes(snapshot.GcHeapBytes)</MudText>
+            <MudText Typo="Typo.body2" Class="mud-text-secondary">
+                Committed: @SystemSnapshot.FormatBytes(snapshot.GcTotalCommittedBytes)
+            </MudText>
+        </MudPaper>
+    </MudItem>
+
+    <MudItem xs="12" sm="6" md="3">
+        <MudPaper Elevation="2" Class="pa-4">
+            <MudText Typo="Typo.caption">Uptime</MudText>
+            <MudText Typo="Typo.h5">@FormatUptime(snapshot.Uptime)</MudText>
+            <MudText Typo="Typo.body2" Class="mud-text-secondary">
+                Threads: @snapshot.ThreadCount &nbsp; Handles: @snapshot.HandleCount
+            </MudText>
+        </MudPaper>
+    </MudItem>
+</MudGrid>
+
+@* ── GC Collections ── *@
+<MudPaper Elevation="1" Class="pa-4 mb-4">
+    <MudText Typo="Typo.subtitle1" Class="mb-2">GC Collections</MudText>
+    <MudSimpleTable Dense="true" Hover="true" Bordered="true" Style="max-width:400px;">
+        <thead>
+            <tr><th>Generation</th><th>Count</th></tr>
+        </thead>
+        <tbody>
+            <tr><td>Gen 0</td><td>@snapshot.GcGen0Collections</td></tr>
+            <tr><td>Gen 1</td><td>@snapshot.GcGen1Collections</td></tr>
+            <tr><td>Gen 2</td><td>@snapshot.GcGen2Collections</td></tr>
+        </tbody>
+    </MudSimpleTable>
+</MudPaper>
+
+@* ── Active Streams ── *@
+<MudPaper Elevation="1" Class="pa-4 mb-4">
+    <MudText Typo="Typo.subtitle1" Class="mb-2">Active RTP Streams</MudText>
+    @{
+        var streams = StreamManager.GetActiveStreams();
+    }
+    @if (streams.Count == 0)
+    {
+        <MudAlert Severity="Severity.Info" Dense="true">No active streams</MudAlert>
+    }
+    else
+    {
+        <MudSimpleTable Dense="true" Hover="true" Bordered="true">
+            <thead>
+                <tr>
+                    <th>Name</th><th>Multicast</th><th>Port</th>
+                    <th>Format</th><th>Clients</th><th>Started</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var s in streams)
+                {
+                    <tr>
+                        <td>@s.Name</td>
+                        <td>@s.MulticastGroup</td>
+                        <td>@s.Port</td>
+                        <td>@($"{s.BitDepth}bit / {s.SampleRate}Hz / {s.Channels}ch")</td>
+                        <td>@s.ClientCount</td>
+                        <td>@s.StartedAt.ToString("HH:mm:ss")</td>
+                    </tr>
+                }
+            </tbody>
+        </MudSimpleTable>
+    }
+</MudPaper>
+
+@* ── Active Recordings ── *@
+<MudPaper Elevation="1" Class="pa-4 mb-4">
+    <MudText Typo="Typo.subtitle1" Class="mb-2">Active Recordings</MudText>
+    @{
+        var recordings = RecordingService.GetAllRecordingInfo();
+    }
+    @if (recordings.Count == 0)
+    {
+        <MudAlert Severity="Severity.Info" Dense="true">No active recordings</MudAlert>
+    }
+    else
+    {
+        <MudSimpleTable Dense="true" Hover="true" Bordered="true">
+            <thead>
+                <tr>
+                    <th>Stream</th><th>Channel</th><th>Format</th>
+                    <th>Buffer</th><th>Last Packet</th><th>Voice Detect</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var r in recordings)
+                {
+                    <tr>
+                        <td>@r.StreamId</td>
+                        <td>@r.Channel</td>
+                        <td>@($"{r.BitDepth}bit / {r.SampleRate}Hz")</td>
+                        <td>@SystemSnapshot.FormatBytes(r.BufferBytes)</td>
+                        <td>@r.LastPacketTime.ToString("HH:mm:ss.fff")</td>
+                        <td>
+                            @if (r.VoiceDetectEnabled)
+                            {
+                                <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" Size="Size.Small" />
+                            }
+                            else
+                            {
+                                <MudIcon Icon="@Icons.Material.Filled.Cancel" Color="Color.Default" Size="Size.Small" />
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </MudSimpleTable>
+    }
+</MudPaper>
+
+@* ── Live Log Messages ── *@
+<MudPaper Elevation="1" Class="pa-4 mb-4">
+    <div class="d-flex align-center justify-space-between mb-2">
+        <MudText Typo="Typo.subtitle1">Log Messages</MudText>
+        <div class="d-flex align-center gap-2">
+            <MudSwitch T="bool" @bind-Value="autoScroll" Label="Auto-scroll" Color="Color.Primary" />
+            <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small"
+                           OnClick="ClearLogs" Title="Clear logs" />
+        </div>
+    </div>
+
+    <div id="log-container" style="max-height:400px; overflow-y:auto; font-family:'Cascadia Code','Fira Code',monospace; font-size:0.8rem; background:#1e1e2e; color:#cdd6f4; padding:8px; border-radius:4px;">
+        @foreach (var entry in logEntries)
+        {
+            <div style="white-space:pre-wrap; padding:1px 0; border-bottom:1px solid #31324480;">
+                <span style="color:#6c7086;">@entry.Timestamp.ToString("HH:mm:ss.fff")</span>
+                <span style="@LevelStyle(entry.Level)">@LevelLabel(entry.Level)</span>
+                <span style="color:#89b4fa;">[@entry.Category]</span>
+                <span>@entry.Message</span>
+            </div>
+        }
+    </div>
+</MudPaper>
+
+@code {
+    private SystemSnapshot snapshot = new();
+    private IReadOnlyList<LogEntry> logEntries = [];
+    private bool autoScroll = true;
+    private System.Threading.Timer? _refreshTimer;
+
+    protected override void OnInitialized()
+    {
+        snapshot = Monitor.Latest;
+        logEntries = LogBuffer.GetEntries();
+
+        Monitor.OnSnapshotUpdated += OnMetricsUpdated;
+        LogBuffer.OnNewEntry += OnLogAdded;
+    }
+
+    private void OnMetricsUpdated()
+    {
+        snapshot = Monitor.Latest;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void OnLogAdded()
+    {
+        logEntries = LogBuffer.GetEntries();
+        _ = InvokeAsync(async () =>
+        {
+            StateHasChanged();
+            if (autoScroll)
+            {
+                // Small delay to let the DOM render before scrolling
+                await Task.Delay(50);
+                // Scroll handled via CSS overflow — the container auto-scrolls
+                // because the last element is always rendered at the bottom.
+            }
+        });
+    }
+
+    private void ClearLogs()
+    {
+        LogBuffer.Clear();
+        logEntries = [];
+    }
+
+    private static Color CpuColor(double pct) => pct switch
+    {
+        < 30 => Color.Success,
+        < 70 => Color.Warning,
+        _ => Color.Error
+    };
+
+    private static string FormatUptime(TimeSpan ts) =>
+        ts.TotalDays >= 1
+            ? $"{(int)ts.TotalDays}d {ts.Hours:D2}:{ts.Minutes:D2}:{ts.Seconds:D2}"
+            : $"{ts.Hours:D2}:{ts.Minutes:D2}:{ts.Seconds:D2}";
+
+    private static string LevelLabel(LogLevel level) => level switch
+    {
+        LogLevel.Trace => "TRC",
+        LogLevel.Debug => "DBG",
+        LogLevel.Information => "INF",
+        LogLevel.Warning => "WRN",
+        LogLevel.Error => "ERR",
+        LogLevel.Critical => "CRT",
+        _ => "???"
+    };
+
+    private static string LevelStyle(LogLevel level) => level switch
+    {
+        LogLevel.Warning => "color:#f9e2af; font-weight:bold;",
+        LogLevel.Error => "color:#f38ba8; font-weight:bold;",
+        LogLevel.Critical => "color:#f38ba8; font-weight:bold; text-decoration:underline;",
+        _ => "color:#a6e3a1;"
+    };
+
+    public void Dispose()
+    {
+        Monitor.OnSnapshotUpdated -= OnMetricsUpdated;
+        LogBuffer.OnNewEntry -= OnLogAdded;
+        _refreshTimer?.Dispose();
+    }
+}

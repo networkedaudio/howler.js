@@ -73,10 +73,22 @@ builder.Services.AddSingleton<RtpStreamManager>();
 // Channel recording service (per-channel capture with silence detection)
 builder.Services.Configure<RecordingOptions>(
     builder.Configuration.GetSection(RecordingOptions.Section));
+
+// Tiered storage paths (immediate processing, medium-term, long-term)
+builder.Services.Configure<StoragePathOptions>(
+    builder.Configuration.GetSection(StoragePathOptions.Section));
 builder.Services.AddSingleton<ChannelRecordingService>();
+builder.Services.AddHostedService<FileDistributionService>();
 
 // Soundcard capture (PvRecorder-based local recording device input)
 builder.Services.AddSingleton<SoundcardCaptureService>();
+
+// System monitoring (CPU, memory, GC metrics) and log buffer for status page
+builder.Services.AddSingleton<LogBuffer>();
+builder.Services.AddSingleton<LogBufferProvider>();
+builder.Services.AddSingleton<ILoggerProvider>(sp => sp.GetRequiredService<LogBufferProvider>());
+builder.Services.AddSingleton<SystemMonitorService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<SystemMonitorService>());
 
 // Ensure static web assets manifest is loaded in all environments (not just Development)
 if (!builder.Environment.IsDevelopment())

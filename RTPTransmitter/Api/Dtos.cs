@@ -105,10 +105,20 @@ public sealed class ChannelRecordingDto
 /// </summary>
 public sealed class RecordingSettingsDto
 {
-    public string OutputDirectory { get; set; } = "Recordings";
     public int SilencePacketThreshold { get; set; } = 100;
     public int NoPacketTimeoutMs { get; set; } = 1000;
     public long MaxBufferSizeBytes { get; set; } = 10 * 1024 * 1024;
+}
+
+/// <summary>
+/// Tiered storage path settings (mirrors <see cref="Services.StoragePathOptions"/>).
+/// </summary>
+public sealed class StoragePathsDto
+{
+    public string ImmediateProcessing { get; set; } = "Recordings";
+    public List<string> MediumTermStorage { get; set; } = [];
+    public List<string> LongTermStorage { get; set; } = [];
+    public int DistributionIntervalSeconds { get; set; } = 60;
 }
 
 /// <summary>

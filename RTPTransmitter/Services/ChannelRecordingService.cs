@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 
 namespace RTPTransmitter.Services;
 
+
 /// <summary>
 /// Manages per-channel recording of AES67 audio data.
 /// Channels are keyed by "{streamId}:{channelIndex}".
@@ -17,17 +18,20 @@ public sealed class ChannelRecordingService : IDisposable
 {
     private readonly ILogger<ChannelRecordingService> _logger;
     private readonly RecordingOptions _options;
+    private readonly StoragePathOptions _storagePaths;
     private readonly ConcurrentDictionary<string, ChannelRecorder> _recorders = new();
     private readonly Timer _timeoutTimer;
 
     public ChannelRecordingService(
         ILogger<ChannelRecordingService> logger,
-        IOptions<RecordingOptions> options)
+        IOptions<RecordingOptions> options,
+        IOptions<StoragePathOptions> storagePaths)
     {
         _logger = logger;
         _options = options.Value;
+        _storagePaths = storagePaths.Value;
 
-        Directory.CreateDirectory(_options.OutputDirectory);
+        Directory.CreateDirectory(_storagePaths.ImmediateProcessing);
 
         // Periodically check for packet-timeout flushes
         _timeoutTimer = new Timer(CheckTimeouts, null, 500, 500);
@@ -285,32 +289,49 @@ public sealed class ChannelRecordingService : IDisposable
     }
 
     /// <summary>
-    /// Flush the recorder's buffer to a raw file on disk and reset the buffer.
+    /// Flush the recorder's buffer to a FLAC file and generate a waveform SVG.
     /// </summary>
     private void FlushToDisk(ChannelRecorder recorder)
     {
         if (recorder.Buffer.Length == 0) return;
 
-        var timestamp = DateTimeOffset.UtcNow.ToString("yyyyMMdd_HHmmss_fff");
+        var now = DateTimeOffset.UtcNow;
+        var timestamp = now.ToString("yyyyMMdd_HHmmss_fff");
         var safeName = SanitizeFileName(recorder.StreamId);
-        var fileName = $"{safeName}_ch{recorder.Channel}_{timestamp}.raw";
-        var filePath = Path.Combine(_options.OutputDirectory, fileName);
+        var baseName = $"{safeName}_ch{recorder.Channel}_{timestamp}";
+
+        var flacPath = Path.Combine(_storagePaths.ImmediateProcessing, $"{baseName}.flac");
+        var svgPath = Path.Combine(_storagePaths.ImmediateProcessing, $"{baseName}.svg");
 
         try
         {
-            using var fileStream = new FileStream(filePath, FileMode.Create, FileAccess.Write);
-            recorder.Buffer.Position = 0;
-            recorder.Buffer.CopyTo(fileStream);
+            var pcmBytes = recorder.Buffer.ToArray();
+
+            // Generate waveform SVG from the raw PCM buffer
+            var svg = WaveformRenderer.RenderSvg(pcmBytes, recorder.BitDepth);
+            File.WriteAllText(svgPath, svg);
 
             _logger.LogInformation(
-                "Recording [{StreamId}:ch{Channel}] saved {Bytes} bytes to {File}",
-                recorder.StreamId, recorder.Channel, recorder.Buffer.Length, filePath);
+                "Recording [{StreamId}:ch{Channel}] waveform saved to {File}",
+                recorder.StreamId, recorder.Channel, svgPath);
+
+            // Encode to FLAC with recording timestamp metadata
+            FlacEncoderHelper.Encode(
+                pcmBytes,
+                recorder.SampleRate,
+                recorder.BitDepth,
+                flacPath,
+                now);
+
+            _logger.LogInformation(
+                "Recording [{StreamId}:ch{Channel}] encoded {Bytes} PCM bytes to {File}",
+                recorder.StreamId, recorder.Channel, pcmBytes.Length, flacPath);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex,
-                "Recording [{StreamId}:ch{Channel}] failed to write {Bytes} bytes to {File}",
-                recorder.StreamId, recorder.Channel, recorder.Buffer.Length, filePath);
+                "Recording [{StreamId}:ch{Channel}] failed to flush {Bytes} bytes",
+                recorder.StreamId, recorder.Channel, recorder.Buffer.Length);
         }
 
         recorder.Buffer.SetLength(0);

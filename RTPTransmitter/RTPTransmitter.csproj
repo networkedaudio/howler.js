@@ -4,12 +4,25 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="CSFlac\obj\**" />
+    <Compile Remove="CSFlac\bin\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CUETools.Codecs.FLAKE" Version="1.0.5" />
     <PackageReference Include="MudBlazor" Version="9.2.0" />
+    <PackageReference Include="NAudio.Core" Version="2.3.0" />
+    <PackageReference Include="NAudio.Lame" Version="2.1.0" />
     <PackageReference Include="PvRecorder" Version="1.2.13" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="10.1.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="CSFlac\CSFlac\Properties\" />
   </ItemGroup>
 
 </Project>
